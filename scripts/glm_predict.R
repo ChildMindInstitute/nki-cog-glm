@@ -9,6 +9,7 @@ library('tidyr')
 ##
 #groupDir <- '/data2/txu/projects/NKI_lifespan/dsc_2/group'
 groupDir <- '/projects/txu/NKI_lifespan/group'
+glmdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov", groupDir)
 
 # read in subject 313
 subjects_file = paste0("/data2/txu/projects/NKI_lifespan/scripts/subjects313.list")
@@ -159,7 +160,6 @@ for (cog_name in cog_names) {
   # output dir
   outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s", groupDir, cog_name)
   dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
-  glmdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov", groupDir)
   
   cog_data_rm_outliers <- unlist(lapply(cog_data_all[, cog_name], remove_outliers))
   cog_data_all_rm_outliers <- data.frame(index = 1:length(subjects_list), subjects_list, age, sex, cog_data_rm_outliers)
@@ -179,24 +179,29 @@ for (cog_name in cog_names) {
   fname <- paste0(outdir, '/data_cog.csv')
   write.csv(df_cog, fname)
   
+  train_data_all <- data.frame(actual = numeric(), predicted = numeric(), variable = character(), 
+                           hemi = character(), group = numeric(), stringsAsFactors = FALSE)
+  names(train_data_all) <- c(cog_name, paste0(cog_name, "_predicted"), "variable", "hemi", "group")
+  
   for (i in 1:10) {
-    for (hemi in hemis) {
-      outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s/%s", groupDir, cog_name, i)
-      dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+    outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s/%s", groupDir, cog_name, i)
+    dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+    xnames <- c('sex', 'gradient')
+    stats_names <- c('stats')
+    for (xname in xnames) {
+      for (hemi in hemis) {
+        
+        df_cog_test <- df_cog[which(df_cog$group == i), ]
+        df_cog_train <- df_cog[which(df_cog$group != i),]
+        
+        gmap_train <- niitogmap(df_cog_train$index, hemi)
+        gmap_test <- niitogmap(df_cog_test$index, hemi)
+        
+        train <- niitoGLM(cog_name, df_cog_train$index, hemi, as.numeric(rownames(gmap_train)), df_cog_train)
+        
+        fname <- paste0(outdir, '/train_', hemi ,'.csv')
+        write.csv(train, fname)
       
-      df_cog_test <- df_cog[which(df_cog$group == i), ]
-      df_cog_train <- df_cog[which(df_cog$group != i),]
-      
-      gmap_train <- niitogmap(df_cog_train$index, hemi)
-      gmap_test <- niitogmap(df_cog_test$index, hemi)
-      train <- niitoGLM(cog_name, df_cog_train$index, hemi, as.numeric(rownames(gmap_train)), df_cog_train)
-      
-      fname <- paste0(outdir, '/train_', hemi ,'.csv')
-      write.csv(train, fname)
-      
-      xnames <- c('sex', 'gradient')
-      stats_names <- c('stats')
-      for (xname in xnames) {
         fname <- paste0(glmdir, '/y_cov_residual.', hemi, '.32k_fs_LR.nii.gz')
         img <- nifti.image.read(fname)
         Nvertex <- img$dim[1]
@@ -232,26 +237,54 @@ for (cog_name in cog_names) {
           cluster_avg_train[, j] <- colMeans(gmap_cluster_train_n)
           cluster_avg_test[, j] <- colMeans(gmap_cluster_test_n)
         }
-        cluster_avg_train <- data.frame(cluster_avg_train, df_cog_train[, asmt])
-        names(cluster_avg_train) <- c(paste0("cluster", 1:n_cluster), asmt)
-        cluster_avg_test <- data.frame(cluster_avg_test, df_cog_test[, asmt])
-        names(cluster_avg_test) <- c(paste0("cluster", 1:n_cluster), asmt)
+        cluster_avg_train <- data.frame(cluster_avg_train, df_cog_train[, cog_name])
+        names(cluster_avg_train) <- c(paste0("cluster", 1:n_cluster), cog_name)
+        cluster_avg_test <- data.frame(cluster_avg_test, df_cog_test[, cog_name])
+        names(cluster_avg_test) <- c(paste0("cluster", 1:n_cluster), cog_name)
         
-        run_glm <- paste0("glm(", asmt, " ~ ", paste(c(names(cluster_avg_train)[1:n_cluster]), collapse = " + "), ", data = cluster_avg_train)")
+        run_glm <- paste0("glm(", cog_name, " ~ ", paste(c(names(cluster_avg_train)[1:n_cluster]), collapse = " + "), ", data = cluster_avg_train)")
         glm_result <- eval(parse(text = run_glm))
         coefficients <- glm_result$coefficients
         
-        cluster_avg_test[, paste0(asmt, "_predicted")] <- predict.glm(glm_result, newdata = cluster_avg_test[, 1:n_cluster],
+        cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict.glm(glm_result, newdata = cluster_avg_test[, 1:n_cluster],
                                                                       type = "response")
         
-        png(paste0(outdir, "/glm_", xname, "_pvalue_", hemi, ".png"))
-        plot(cluster_avg_test[, paste0(asmt, "_predicted")], cluster_avg_test[, asmt], xlab = paste0("Predicted ", asmt), 
-             ylab = paste0("Actual ", asmt))
-        abline(a=0, b=1, col="red")
-        dev.off()
+        # png(paste0(outdir, "/glm_", xname, "_pvalue_", hemi, ".png"))
+        # plot(cluster_avg_test[, paste0(cog_name, "_predicted")], cluster_avg_test[, cog_name], xlab = paste0("Predicted ", cog_name), 
+        #      ylab = paste0("Actual ", cog_name))
+        # abline(a=0, b=1, col="red")
+        # dev.off()
         
-        write.csv(cluster_avg_train, paste0(outdir, "/", xname, "_pvalue_", "cluster_avg_train_", hemi, ".csv"))
-        write.csv(cluster_avg_test, paste0(outdir, "/", xname, "_pvalue_", "cluster_avg_test_", hemi, ".csv"))
+        cluster_avg_train$variable <- xname
+        cluster_avg_test$variable <- xname
+        cluster_avg_train$hemi <- hemi
+        cluster_avg_test$hemi <- hemi
+        cluster_avg_train$group <- i
+        cluster_avg_test$group <- i
+        
+        train_data_all <- rbind(train_data_all, cluster_avg_test[, (ncol(cluster_avg_test) - 4):ncol(cluster_avg_test)])
+        
+        write.csv(cluster_avg_train, paste0(outdir, "/", xname, "_pvalue_", "cluster_avg_train_", hemi, ".csv"), row.names = FALSE)
+        write.csv(cluster_avg_test, paste0(outdir, "/", xname, "_pvalue_", "cluster_avg_test_", hemi, ".csv"), row.names = FALSE)
+      }
+      predict <- train_data_all[which(train_data_all$variable == xname & train_data_all$group == i), ]
+      
+      if (nrow(predict) > 0) {
+        model <- summary(lm(predict[, 2] ~ predict[, 1]))
+        p <- round(model$coefficients[2, 4], 3)
+        r <- round(sqrt(model$adj.r.squared), 3)
+        
+        min <- floor(min(predict[, 1:2])/10)*10
+        max <- ceiling(max(predict[, 1:2])/10)*10
+        
+        ggplot(predict, aes(x = predict[, 1], y = predict[, 2])) + 
+          geom_point(aes(colour = factor(hemi))) + 
+          geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
+          labs(x = cog_name, y = paste(cog_name, " Predicted"), color = "Hemisphere", title = paste0(xname, " p_value")) +
+          lims(x = c(min, max),
+              y = c(min, max)) +
+          annotate("text", x = min + 5, y = max - 5,  label = paste0("p = ", p, "\nr = ", r), hjust = 1)
+        ggsave(paste0(outdir, "/glm_", xname, "_pvalue.png"))
       }
     }
   }
