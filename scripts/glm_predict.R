@@ -96,6 +96,8 @@ niitoGLM <- function(asmt, sublist, hemi, idx, df_cog) {
                    gradient_p = numeric(ncolumn),
                    sex_t = numeric(ncolumn),
                    sex_p = numeric(ncolumn),
+                   age_t = numeric(ncolumn),
+                   age_p = numeric(ncolumn),
                    rsquare = numeric(ncolumn),
                    rsquare_adj = numeric(ncolumn))
   df$gradient_p <- 1
@@ -105,13 +107,15 @@ niitoGLM <- function(asmt, sublist, hemi, idx, df_cog) {
   for (i in 1:ncolumn){
     if (i %% 500 == 0) {print(sprintf('->%d ', i))}
     gradient <- gmap[i,]
-    dataframe <- data.frame(y, gradient, sex=df_cog$sex)
-    try({fm <- lm(y ~ gradient + sex , data = dataframe)
+    dataframe <- data.frame(y, gradient, sex=df_cog$sex, age=df_cog$age)
+    try({fm <- lm(y ~ gradient + sex + age, data = dataframe)
     output <- summary(fm)
     df$gradient_t[i] <- output$coefficients['gradient', 't value']
     df$gradient_p[i] <- output$coefficients['gradient', 'Pr(>|t|)']
     df$sex_t[i] <- output$coefficients['sex1', 't value']
     df$sex_p[i] <- output$coefficients['sex1', 'Pr(>|t|)']
+    df$age_t[i] <- output$coefficients['age', 't value']
+    df$age_p[i] <- output$coefficients['age', 'Pr(>|t|)']
     df$rsquare[i] <- output$r.squared
     df$rsquare_adj[i] <- output$adj.r.squared
     df$lm_failed[i] <- 0
@@ -186,18 +190,27 @@ for (cog_name in cog_names) {
   for (i in 1:10) {
     outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s/%s", groupDir, cog_name, i)
     dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
-    xnames <- c('sex', 'gradient')
+    xnames <- c('sex', 'age', 'gradient')
     stats_names <- c('stats')
+    
+    df_cog_test <- df_cog[which(df_cog$group == i), ]
+    df_cog_train <- df_cog[which(df_cog$group != i),]
+    
+    gmap_train_lh <- niitogmap(df_cog_train$index, 'lh')
+    gmap_train_rh <- niitogmap(df_cog_train$index, 'rh')
+    gmap_test_lh <- niitogmap(df_cog_test$index, 'lh')
+    gmap_test_rh <- niitogmap(df_cog_test$index, 'rh')
+    
+    train_lh <- niitoGLM(cog_name, df_cog_train$index, 'lh', as.numeric(rownames(gmap_train_lh)), df_cog_train)
+    train_rh <- niitoGLM(cog_name, df_cog_train$index, 'rh', as.numeric(rownames(gmap_train_rh)), df_cog_train)
     for (xname in xnames) {
+      outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s/%s/%s", groupDir, cog_name, i, xname)
+      dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
       for (hemi in hemis) {
+        gmap_train <- get(paste0('gmap_train_', hemi))
+        gmap_test <- get(paste0('gmap_test_', hemi))
         
-        df_cog_test <- df_cog[which(df_cog$group == i), ]
-        df_cog_train <- df_cog[which(df_cog$group != i),]
-        
-        gmap_train <- niitogmap(df_cog_train$index, hemi)
-        gmap_test <- niitogmap(df_cog_test$index, hemi)
-        
-        train <- niitoGLM(cog_name, df_cog_train$index, hemi, as.numeric(rownames(gmap_train)), df_cog_train)
+        train <- get(paste0('train_', hemi))
         
         fname <- paste0(outdir, '/train_', hemi ,'.csv')
         write.csv(train, fname)
@@ -246,7 +259,7 @@ for (cog_name in cog_names) {
         glm_result <- eval(parse(text = run_glm))
         coefficients <- glm_result$coefficients
         
-        cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict.glm(glm_result, newdata = cluster_avg_test[, 1:n_cluster],
+        cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict.glm(glm_result, newdata = cluster_avg_test,
                                                                       type = "response")
         
         # png(paste0(outdir, "/glm_", xname, "_pvalue_", hemi, ".png"))
@@ -263,6 +276,7 @@ for (cog_name in cog_names) {
         cluster_avg_test$group <- i
         
         train_data_all <- rbind(train_data_all, cluster_avg_test[, (ncol(cluster_avg_test) - 5):ncol(cluster_avg_test)])
+        
         
         write.csv(cluster_avg_train, paste0(outdir, "/", xname, "_pvalue_", "cluster_avg_train_", hemi, ".csv"), row.names = FALSE)
         write.csv(cluster_avg_test, paste0(outdir, "/", xname, "_pvalue_", "cluster_avg_test_", hemi, ".csv"), row.names = FALSE)
