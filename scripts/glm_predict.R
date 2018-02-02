@@ -179,9 +179,9 @@ for (cog_name in cog_names) {
   fname <- paste0(outdir, '/data_cog.csv')
   write.csv(df_cog, fname)
   
-  train_data_all <- data.frame(actual = numeric(), predicted = numeric(), variable = character(), 
+  train_data_all <- data.frame(index = numeric(), actual = numeric(), predicted = numeric(), variable = character(), 
                            hemi = character(), group = numeric(), stringsAsFactors = FALSE)
-  names(train_data_all) <- c(cog_name, paste0(cog_name, "_predicted"), "variable", "hemi", "group")
+  names(train_data_all) <- c("subject", cog_name, paste0(cog_name, "_predicted"), "variable", "hemi", "group")
   
   for (i in 1:10) {
     outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s/%s", groupDir, cog_name, i)
@@ -237,10 +237,10 @@ for (cog_name in cog_names) {
           cluster_avg_train[, j] <- colMeans(gmap_cluster_train_n)
           cluster_avg_test[, j] <- colMeans(gmap_cluster_test_n)
         }
-        cluster_avg_train <- data.frame(cluster_avg_train, df_cog_train[, cog_name])
-        names(cluster_avg_train) <- c(paste0("cluster", 1:n_cluster), cog_name)
-        cluster_avg_test <- data.frame(cluster_avg_test, df_cog_test[, cog_name])
-        names(cluster_avg_test) <- c(paste0("cluster", 1:n_cluster), cog_name)
+        cluster_avg_train <- data.frame(cluster_avg_train, df_cog_train[, c("index", cog_name)])
+        names(cluster_avg_train) <- c(paste0("cluster", 1:n_cluster), "index", cog_name)
+        cluster_avg_test <- data.frame(cluster_avg_test, df_cog_test[, c("index", cog_name)])
+        names(cluster_avg_test) <- c(paste0("cluster", 1:n_cluster), "index", cog_name)
         
         run_glm <- paste0("glm(", cog_name, " ~ ", paste(c(names(cluster_avg_train)[1:n_cluster]), collapse = " + "), ", data = cluster_avg_train)")
         glm_result <- eval(parse(text = run_glm))
@@ -262,7 +262,7 @@ for (cog_name in cog_names) {
         cluster_avg_train$group <- i
         cluster_avg_test$group <- i
         
-        train_data_all <- rbind(train_data_all, cluster_avg_test[, (ncol(cluster_avg_test) - 4):ncol(cluster_avg_test)])
+        train_data_all <- rbind(train_data_all, cluster_avg_test[, (ncol(cluster_avg_test) - 5):ncol(cluster_avg_test)])
         
         write.csv(cluster_avg_train, paste0(outdir, "/", xname, "_pvalue_", "cluster_avg_train_", hemi, ".csv"), row.names = FALSE)
         write.csv(cluster_avg_test, paste0(outdir, "/", xname, "_pvalue_", "cluster_avg_test_", hemi, ".csv"), row.names = FALSE)
@@ -270,22 +270,49 @@ for (cog_name in cog_names) {
       predict <- train_data_all[which(train_data_all$variable == xname & train_data_all$group == i), ]
       
       if (nrow(predict) > 0) {
-        model <- summary(lm(predict[, 2] ~ predict[, 1]))
+        model <- summary(lm(predict[, 3] ~ predict[, 2]))
         p <- round(model$coefficients[2, 4], 3)
-        r <- round(sqrt(model$adj.r.squared), 3)
+        r <- round(sqrt(abs(model$adj.r.squared)), 3)
         
-        min <- floor(min(predict[, 1:2])/10)*10
-        max <- ceiling(max(predict[, 1:2])/10)*10
+        min <- floor(min(predict[, 2:3])/10)*10
+        max <- ceiling(max(predict[, 2:3])/10)*10
         
-        ggplot(predict, aes(x = predict[, 1], y = predict[, 2])) + 
+        ggplot(predict, aes(x = predict[, 2], y = predict[, 3])) + 
           geom_point(aes(colour = factor(hemi))) + 
           geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
           labs(x = cog_name, y = paste(cog_name, " Predicted"), color = "Hemisphere", title = paste0(xname, " p_value")) +
           lims(x = c(min, max),
               y = c(min, max)) +
-          annotate("text", x = min + 5, y = max - 5,  label = paste0("p = ", p, "\nr = ", r), hjust = 1)
+          annotate("text", x = min, y = max - 5,  label = paste0("p = ", p, "\nr = ", r, "\n(calculated from adjusted r-squared)"), hjust = 0)
         ggsave(paste0(outdir, "/glm_", xname, "_pvalue.png"))
       }
+    }
+  }
+  outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s", groupDir, cog_name)
+  for (xname in xnames) {
+    predict <- train_data_all[which(train_data_all$variable == xname), ]
+    predict$age <- df_cog$age[match(predict$index, df_cog$index)]
+    predict$sex <- df_cog$sex[match(predict$index, df_cog$index)]
+    
+    if (nrow(predict) > 0) {
+      predict$age_group <- cut(predict$age, c(6, 20, 40, 60, 85), include.lowest=TRUE)
+      model <- summary(lm(predict[, 2] ~ predict[, 3]))
+      p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
+      r <- round(sqrt(abs(model$adj.r.squared)), 3)
+      
+      min <- floor(min(predict[, 2:3])/10)*10
+      max <- ceiling(max(predict[, 2:3])/10)*10
+      
+      ggplot(predict, aes(x = predict[, 2], y = predict[, 3])) + 
+        geom_point(aes(shape = factor(hemi), colour = age_group)) + 
+        geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
+        labs(x = cog_name, y = paste(cog_name, " Predicted"), color = "Age Group", shape = "Hemisphere", 
+             title = paste0(xname, " p_value all")) +
+        lims(x = c(min, max),
+             y = c(min, max)) +
+        annotate("text", x = min, y = max - 5,  label = paste0("p = ", p, "\nr = ", r, "\n(calculated from adjusted r-squared)"), hjust = 0)
+      ggsave(paste0(outdir, "/glm_", xname, "_pvalue_all.png"))
+      write.csv(predict, paste0(outdir, "/glm_", xname, "_predict_all.csv"))
     }
   }
 }
