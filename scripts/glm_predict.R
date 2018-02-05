@@ -35,6 +35,9 @@ cog_names <- c("WASI_VCI_Comp", "WASI_PRI_Comp", "WASI_FSIQ", "WIAT_Word_Reading
 cog_age_normize_list <- c("WIAT_Word_Reading", "WIAT_Num", "WIAT_Spelling", "WIAT_Comp")
 
 # Remove outliers from a column
+# Parameters
+# x: Numerical vector
+# na.rm: If TRUE, ignore NA values
 remove_outliers <- function(x, na.rm = TRUE, ...) {
   qnt <- quantile(x, probs=c(.25, .75), na.rm = na.rm, ...)
   H <- 1.5 * IQR(x, na.rm = na.rm)
@@ -47,12 +50,23 @@ remove_outliers <- function(x, na.rm = TRUE, ...) {
 # 
 hemis = c("lh","rh")
 Hemispheres = c("L", "R")
-Nvertex_32k <- 34292
-nvertex_on <- c(25406, 25092)
+Nvertex_32k <- 34292 # Total number of vertices in 32k mask
+nvertex_on <- c(25406, 25092) # Number of active vertices in each hemisphere
 names(nvertex_on) <- c("lh", "rh")
 
 # First remove outliers
 ncog <- length(cog_names)
+
+# Convert NKI ROI masks
+for (h in 1:2){
+  hemi <- hemis[h]
+  Hemisphere <- Hemispheres[h]
+  
+  fname = paste0(groupDir, "/masks/", hemi, ".brain.NKI323.wb.32k_fs_LR.nii.gz")
+  gname = paste0(groupDir, "/masks/", Hemisphere, ".brain.NKI323.wb.32k_fs_LR.shape.gii") 
+  scommand <- paste0("sh xt_nii2gii_32k_fs_LR.sh ", fname, " ", gname, " ", Hemisphere)
+  system(scommand)
+}
 
 # A function to extract gradient map based on list of subjects
 # Parameters
@@ -165,27 +179,28 @@ for (cog_name in cog_names) {
   outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s", groupDir, cog_name)
   dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   
+  # Remove outliers from cognitive data
   cog_data_rm_outliers <- unlist(lapply(cog_data_all[, cog_name], remove_outliers))
   cog_data_all_rm_outliers <- data.frame(index = 1:length(subjects_list), subjects_list, age, sex, cog_data_rm_outliers)
   colnames(cog_data_all_rm_outliers) <- c('index', 'subject', 'age', 'sex', cog_name)
   
-  idx_sub <- which(is.na(cog_data_all_rm_outliers[,cog_name])==FALSE)
+  idx_sub <- which(is.na(cog_data_all_rm_outliers[,cog_name])==FALSE) # indices of subjects with cognitive score within range
   df_cog <- cog_data_all_rm_outliers[idx_sub, ]
   
   set.seed(123)
-  #df_cog$group <- sample(1:10, size = nrow(df_cog), replace = TRUE)
-  df_cog$group <- sample(rep(seq_len(10), length.out = nrow(df_cog)))
+  df_cog$group <- sample(rep(seq_len(10), length.out = nrow(df_cog))) # Randomly split subjects into 10 groups
   df_tmp <- data.frame(age = df_cog$age - mean(df_cog$age), y = df_cog[,cog_name])
   
-  if (cog_name %in% cog_age_normize_list){
-    df_cog[, cog_name] <- resid(lm(y ~ 0 + df_tmp$age, df_tmp, na.action = na.exclude))
-  }
+  # if (cog_name %in% cog_age_normize_list){
+  #   df_cog[, cog_name] <- resid(lm(y ~ 0 + df_tmp$age, df_tmp, na.action = na.exclude))
+  # }
   fname <- paste0(outdir, '/data_cog.csv')
   write.csv(df_cog, fname)
   
-  train_data_all <- data.frame(index = numeric(), actual = numeric(), predicted = numeric(), variable = character(), 
+  # Create a dataframe for test predication data
+  test_data_all <- data.frame(index = numeric(), actual = numeric(), predicted = numeric(), variable = character(), 
                            hemi = character(), group = numeric(), stringsAsFactors = FALSE)
-  names(train_data_all) <- c("subject", cog_name, paste0(cog_name, "_predicted"), "variable", "hemi", "group")
+  names(test_data_all) <- c("subject", cog_name, paste0(cog_name, "_predicted"), "variable", "hemi", "group")
   
   for (i in 1:10) {
     outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s/%s", groupDir, cog_name, i)
@@ -193,14 +208,17 @@ for (cog_name in cog_names) {
     xnames <- c('sex', 'age', 'gradient')
     stats_names <- c('stats')
     
-    df_cog_test <- df_cog[which(df_cog$group == i), ]
-    df_cog_train <- df_cog[which(df_cog$group != i),]
+    df_cog_test <- df_cog[which(df_cog$group == i), ] # Subset cognitive data into test group
+    df_cog_train <- df_cog[which(df_cog$group != i),] # Subset cognitive data into training group
     
+    # Get gradient data for training group
     gmap_train_lh <- niitogmap(df_cog_train$index, 'lh')
     gmap_train_rh <- niitogmap(df_cog_train$index, 'rh')
+    # Get gradient data for test group
     gmap_test_lh <- niitogmap(df_cog_test$index, 'lh')
     gmap_test_rh <- niitogmap(df_cog_test$index, 'rh')
     
+    # Create data frame of linear model results
     train_lh <- niitoGLM(cog_name, df_cog_train$index, 'lh', as.numeric(rownames(gmap_train_lh)), df_cog_train)
     train_rh <- niitoGLM(cog_name, df_cog_train$index, 'rh', as.numeric(rownames(gmap_train_rh)), df_cog_train)
     for (xname in xnames) {
@@ -211,9 +229,6 @@ for (cog_name in cog_names) {
         gmap_test <- get(paste0('gmap_test_', hemi))
         
         train <- get(paste0('train_', hemi))
-        
-        fname <- paste0(outdir, '/train_', hemi ,'.csv')
-        write.csv(train, fname)
       
         fname <- paste0(glmdir, '/y_cov_residual.', hemi, '.32k_fs_LR.nii.gz')
         img <- nifti.image.read(fname)
@@ -222,43 +237,56 @@ for (cog_name in cog_names) {
         var <- paste0(xname, '_p')
         idx <- train$idx
         
+        # Save linear model dataframe to nifti file, then add clusters to dataframe and save into excel file
         fname <- GLMtonii(glmdir = glmdir, outdir = outdir, variable = xname, vertices = idx, hemi = hemi, df = train)
         
         img <- nifti.image.read(fname)
         train$cluster <- img[idx]
+        
+        fname <- paste0(outdir, '/train_', hemi ,'.csv')
+        write.csv(train, fname)
+        
         n_cluster <- max(img[idx])
         
+        # Skip to next iteration of loop if there are no significant clusters
         if (n_cluster == 0) {
           print(paste0('No significant cluster for ', cog_name, ' ', xname, '_pvalue iteration ', i))
           next
         }
         
+        # For training gradient data frame, subset vertices in significant cluster
         gmap_clusters_train <- gmap_train[which(train$cluster != 0), ]
         clusters <- train$cluster[which(train$cluster != 0)]
-        gmap_clusters_train <- gmap_clusters_train[order(clusters), ]
+        gmap_clusters_train <- gmap_clusters_train[order(clusters), ] # order rows in dataframe by cluster
         cluster_order <- clusters[order(clusters)]
         
+        # Subset test gradient data frame by significant clusters in test data frame
         gmap_clusters_test <- gmap_test[which(train$cluster != 0), ]
         gmap_clusters_test <- gmap_clusters_test[order(clusters), ]
         # Create a data frame called cluster avg (ncol = number of clusters, nrow = number of training subjects)
         cluster_avg_train <- matrix(data = NA, nrow = ncol(gmap_train), ncol = n_cluster)
         cluster_avg_test <- matrix(data = NA, nrow = ncol(gmap_test), ncol = n_cluster)
         
+        # Calculate avg gradient values in each cluster
         for (j in 1:n_cluster) {
           gmap_cluster_train_n <- gmap_clusters_train[which(cluster_order == j), ]
           gmap_cluster_test_n <- gmap_clusters_test[which(cluster_order == j), ]
           cluster_avg_train[, j] <- colMeans(gmap_cluster_train_n)
           cluster_avg_test[, j] <- colMeans(gmap_cluster_test_n)
         }
-        cluster_avg_train <- data.frame(cluster_avg_train, df_cog_train[, c("index", cog_name)])
-        names(cluster_avg_train) <- c(paste0("cluster", 1:n_cluster), "index", cog_name)
-        cluster_avg_test <- data.frame(cluster_avg_test, df_cog_test[, c("index", cog_name)])
-        names(cluster_avg_test) <- c(paste0("cluster", 1:n_cluster), "index", cog_name)
+        # create training and test data frames with cluster averages, subject index, age, sex, and cognitive score
+        cluster_avg_train <- data.frame(cluster_avg_train, df_cog_train[, c("index", "age", "sex", cog_name)])
+        names(cluster_avg_train) <- c(paste0("cluster", 1:n_cluster), "index", "age", "sex", cog_name)
+        cluster_avg_test <- data.frame(cluster_avg_test, df_cog_test[, c("index", "age", "sex", cog_name)])
+        names(cluster_avg_test) <- c(paste0("cluster", 1:n_cluster), "index", "age", "sex", cog_name)
         
-        run_glm <- paste0("glm(", cog_name, " ~ ", paste(c(names(cluster_avg_train)[1:n_cluster]), collapse = " + "), ", data = cluster_avg_train)")
+        # Run generalized linear model for clusters, age, and sex
+        run_glm <- paste0("glm(", cog_name, " ~ ", paste(c(names(cluster_avg_train)[1:n_cluster]), collapse = " + "), 
+                          " + age + sex, data = cluster_avg_train)")
         glm_result <- eval(parse(text = run_glm))
         coefficients <- glm_result$coefficients
         
+        # Use glm to predict cognitive score for test dataset
         cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict.glm(glm_result, newdata = cluster_avg_test,
                                                                       type = "response")
         
@@ -275,14 +303,17 @@ for (cog_name in cog_names) {
         cluster_avg_train$group <- i
         cluster_avg_test$group <- i
         
-        train_data_all <- rbind(train_data_all, cluster_avg_test[, (ncol(cluster_avg_test) - 5):ncol(cluster_avg_test)])
+        # Combine prediction data with prediction data from previous iterations
+        test_data_all <- rbind(test_data_all, cluster_avg_test[, c("index", cog_name, paste0(cog_name, "_predicted"),
+                                                                     "variable", "hemi", "group")])
         
         
         write.csv(cluster_avg_train, paste0(outdir, "/", xname, "_pvalue_", "cluster_avg_train_", hemi, ".csv"), row.names = FALSE)
         write.csv(cluster_avg_test, paste0(outdir, "/", xname, "_pvalue_", "cluster_avg_test_", hemi, ".csv"), row.names = FALSE)
       }
-      predict <- train_data_all[which(train_data_all$variable == xname & train_data_all$group == i), ]
+      predict <- test_data_all[which(test_data_all$variable == xname & test_data_all$group == i), ]
       
+      # Plot prediction data
       if (nrow(predict) > 0) {
         model <- summary(lm(predict[, 3] ~ predict[, 2]))
         p <- round(model$coefficients[2, 4], 3)
@@ -303,13 +334,14 @@ for (cog_name in cog_names) {
     }
   }
   outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s", groupDir, cog_name)
+  # Plot prediction data for all 10 iterations combined
   for (xname in xnames) {
-    predict <- train_data_all[which(train_data_all$variable == xname), ]
+    predict <- test_data_all[which(test_data_all$variable == xname), ]
     predict$age <- df_cog$age[match(predict$index, df_cog$index)]
     predict$sex <- df_cog$sex[match(predict$index, df_cog$index)]
     
     if (nrow(predict) > 0) {
-      predict$age_group <- cut(predict$age, c(6, 20, 40, 60, 85), include.lowest=TRUE)
+      predict$age_group <- cut(predict$age, c(6, 20, 40, 60, 85), include.lowest=TRUE) # Define age groups for subjects
       model <- summary(lm(predict[, 2] ~ predict[, 3]))
       p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
       r <- round(sqrt(abs(model$adj.r.squared)), 3)
@@ -330,18 +362,3 @@ for (cog_name in cog_names) {
     }
   }
 }
-
-
-# prepare the cog data
-
-# Convert NKI ROI masks
-for (h in 1:2){
-  hemi <- hemis[h]
-  Hemisphere <- Hemispheres[h]
-  
-  fname = paste0(groupDir, "/masks/", hemi, ".brain.NKI323.wb.32k_fs_LR.nii.gz")
-  gname = paste0(groupDir, "/masks/", Hemisphere, ".brain.NKI323.wb.32k_fs_LR.shape.gii") 
-  scommand <- paste0("sh xt_nii2gii_32k_fs_LR.sh ", fname, " ", gname, " ", Hemisphere)
-  system(scommand)
-}
-
