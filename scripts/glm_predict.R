@@ -1,4 +1,4 @@
-args <- commandArgs()
+args <- commandArgs(TRUE)
 cog_name <- args[1]
 
 setwd("/projects/txu/NKI_lifespan/scripts")
@@ -232,7 +232,6 @@ GLMtonii <- function(glmdir, outdir, variable = "gradient", vertices, hemi, df) 
   fname <- paste0(outdir, '/clusters/', hemi, '.', variable, '_p_value_cluster.nii.gz')
   fname
 }
-
 
 # output dir
 outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s", groupDir, cog_name)
@@ -510,3 +509,4 @@ if (nrow(predict) > 0) {
   ggsave(paste0(outdir, "/glm_gradient_pvalue_all.png"))
   write.csv(predict, paste0(outdir, "/glm_gradient_predict_all.csv"))
 }
+
