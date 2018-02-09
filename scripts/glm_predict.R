@@ -354,36 +354,42 @@ for (i in 1:10) {
     # glasser parcellations, then separate clusters by glasser parcellation
     cluster_idx <- 1
     train$cluster_by_glasser <- 0
-    for (j in 1:n_cluster) {
-      glasser_clusters <- unique(train$glasser[which(train$cluster == j)])
-      for (k in glasser_clusters) {
-        if (sum(train$cluster2 == j & train$glasser == k) > 1) {
-          train$cluster_by_glasser[which(train$cluster == j & train$glasser == k)] <- cluster_idx
-          cluster_idx <- cluster_idx + 1
+    if (n_cluster > 0) {
+      for (j in 1:n_cluster) {
+        glasser_clusters <- unique(train$glasser[which(train$cluster == j)])
+        for (k in glasser_clusters[which(glasser_clusters != 0)]) {
+          if (sum(train$cluster == j & train$glasser == k) > 1) {
+            train$cluster_by_glasser[which(train$cluster == j & train$glasser == k)] <- cluster_idx
+            cluster_idx <- cluster_idx + 1
+          }
         }
       }
     }
     
     cluster_idx <- 1
     train$cluster_by_glasser2 <- 0
-    for (j in 1:n_cluster2) {
-      glasser_clusters <- unique(train$glasser[which(train$cluster2 == j)])
-      for (k in glasser_clusters) {
-        if (sum(train$cluster2 == j & train$glasser == k) > 1) {
-          train$cluster_by_glasser2[which(train$cluster2 == j & train$glasser == k)] <- cluster_idx
-          cluster_idx <- cluster_idx + 1
+    if (n_cluster2 > 0) {
+      for (j in 1:n_cluster2) {
+        glasser_clusters <- unique(train$glasser[which(train$cluster2 == j)])
+        for (k in glasser_clusters[which(glasser_clusters != 0)]) {
+          if (sum(train$cluster2 == j & train$glasser == k) > 1) {
+            train$cluster_by_glasser2[which(train$cluster2 == j & train$glasser == k)] <- cluster_idx
+            cluster_idx <- cluster_idx + 1
+          }
         }
       }
     }
     
     cluster_idx <- 1
     train$cluster_by_glasser3 <- 0
-    for (j in 1:n_cluster3) {
-      glasser_clusters <- unique(train$glasser[which(train$cluster3 == j)])
-      for (k in glasser_clusters) {
-        if (sum(train$cluster3 == j & train$glasser == k) > 1) {
-          train$cluster_by_glasser3[which(train$cluster3 == j & train$glasser == k)] <- cluster_idx
-          cluster_idx <- cluster_idx + 1
+    if (n_cluster3 > 0) {
+      for (j in 1:n_cluster3) {
+        glasser_clusters <- unique(train$glasser[which(train$cluster3 == j)])
+        for (k in glasser_clusters[which(glasser_clusters != 0)]) {
+          if (sum(train$cluster3 == j & train$glasser == k) > 1) {
+            train$cluster_by_glasser3[which(train$cluster3 == j & train$glasser == k)] <- cluster_idx
+            cluster_idx <- cluster_idx + 1
+          }
         }
       }
     }
