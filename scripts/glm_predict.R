@@ -21,10 +21,31 @@ nsubj <- length(subjects_list)
 
 fname = paste0("/data2/txu/projects/NKI_lifespan/dsc_2/group/info/subjects313_info.mat")
 mat <- R.matlab::readMat(fname)
-sex = factor(mat$sex)
-age = mat$age
+sex <- factor(mat$sex)
+age <- mat$age
 basic <- data.frame(subject=subjects_list, age, sex)
 
+#
+hemis = c("lh","rh")
+Hemispheres = c("L", "R")
+Nvertex_32k <- 32492 # Total number of vertices in 32k mask
+nvertex_on <- c(25406, 25092) # Number of active vertices in each hemisphere
+names(nvertex_on) <- c("lh", "rh")
+
+# read in NKI 323 surface
+fname <- paste0(groupDir, "/masks/lh.brain.NKI323.wb.32k_fs_LR.nii.gz")
+img <- nifti.image.read(fname)[, 1]
+surf_idx_lh <- which(img != 0)
+fname <- paste0(groupDir, "/masks/rh.brain.NKI323.wb.32k_fs_LR.nii.gz")
+img <- nifti.image.read(fname)[, 1]
+surf_idx_rh <- which(img != 0)
+
+# read in Glasser parcellation
+fname <- "/home/data/Projects/txu/templates/Glasser_et_al_2016_HCP_MMP1.0_RVVG/xt/32k_fs_LR/HCP_MMP_P210.lh.CorticalAreas_dil_Colors.32k_fs_LR.nii.gz"
+glasser_lh <- nifti.image.read(fname)[surf_idx_lh, 1]
+fname <- "/home/data/Projects/txu/templates/Glasser_et_al_2016_HCP_MMP1.0_RVVG/xt/32k_fs_LR/HCP_MMP_P210.rh.CorticalAreas_dil_Colors.32k_fs_LR.nii.gz"
+glasser_rh <- nifti.image.read(fname)[surf_idx_rh, 1]
+  
 # read in the cognitive task
 cog_data <- read.csv("/projects/txu/NKI_lifespan/info/cog_asmt_tx.csv")[, -1]
 names(cog_data)[1] <- "subject"
@@ -50,12 +71,6 @@ remove_outliers <- function(x, na.rm = TRUE, ...) {
   y
 }
 
-# 
-hemis = c("lh","rh")
-Hemispheres = c("L", "R")
-Nvertex_32k <- 32492 # Total number of vertices in 32k mask
-nvertex_on <- c(25406, 25092) # Number of active vertices in each hemisphere
-names(nvertex_on) <- c("lh", "rh")
 
 # First remove outliers
 ncog <- length(cog_names)
@@ -291,6 +306,9 @@ for (i in 1:10) {
     gmap_test <- get(paste0('gmap_test_', hemi))
     
     train <- get(paste0('train_', hemi))
+    
+    glasser <- get(paste0('glasser_', hemi))
+    train$glasser <- glasser
   
     fname <- paste0(glmdir, '/y_cov_residual.', hemi, '.32k_fs_LR.nii.gz')
     img <- nifti.image.read(fname)
@@ -322,27 +340,68 @@ for (i in 1:10) {
     assign(paste0("sig_clusters3_", hemi), sig_clusters)
     train$cluster3 <- img[idx]
     
-    
-    fname <- paste0(outdir, '/train_', hemi ,'.csv')
-    write.csv(train, fname)
-    
     n_cluster <- max(train$cluster)
     n_cluster2 <- max(train$cluster2)
     n_cluster3 <- max(train$cluster3)
-    
+
     # Skip to next iteration of loop if there are no significant clusters
     if (n_cluster == 0 & n_cluster2 == 0 & n_cluster3 == 0) {
       print(paste0('No significant cluster for ', cog_name, ' gradient_pvalue iteration ', i))
       next
     }
     
+    # relabel clusters by glasser parcellation, i.e. if a cluster contains multiple 
+    # glasser parcellations, then separate clusters by glasser parcellation
+    cluster_idx <- 1
+    train$cluster_by_glasser <- 0
+    for (j in 1:n_cluster) {
+      glasser_clusters <- unique(train$glasser[which(train$cluster == j)])
+      for (k in glasser_clusters) {
+        if (sum(train$cluster2 == j & train$glasser == k) > 1) {
+          train$cluster_by_glasser[which(train$cluster == j & train$glasser == k)] <- cluster_idx
+          cluster_idx <- cluster_idx + 1
+        }
+      }
+    }
+    
+    cluster_idx <- 1
+    train$cluster_by_glasser2 <- 0
+    for (j in 1:n_cluster2) {
+      glasser_clusters <- unique(train$glasser[which(train$cluster2 == j)])
+      for (k in glasser_clusters) {
+        if (sum(train$cluster2 == j & train$glasser == k) > 1) {
+          train$cluster_by_glasser2[which(train$cluster2 == j & train$glasser == k)] <- cluster_idx
+          cluster_idx <- cluster_idx + 1
+        }
+      }
+    }
+    
+    cluster_idx <- 1
+    train$cluster_by_glasser3 <- 0
+    for (j in 1:n_cluster3) {
+      glasser_clusters <- unique(train$glasser[which(train$cluster3 == j)])
+      for (k in glasser_clusters) {
+        if (sum(train$cluster3 == j & train$glasser == k) > 1) {
+          train$cluster_by_glasser3[which(train$cluster3 == j & train$glasser == k)] <- cluster_idx
+          cluster_idx <- cluster_idx + 1
+        }
+      }
+    }
+    
+    fname <- paste0(outdir, '/train_', hemi ,'.csv')
+    write.csv(train, fname)
+    
+    n_cluster <- max(train$cluster_by_glasser)
+    n_cluster2 <- max(train$cluster_by_glasser2)
+    n_cluster3 <- max(train$cluster_by_glasser3)
+    
     # For training gradient data frame, subset vertices in significant cluster
-    gmap_clusters_train <- gmap_train[which(train$cluster != 0), ]
-    clusters <- train$cluster[which(train$cluster != 0)]
-    gmap_clusters2_train <- gmap_train[which(train$cluster2 != 0), ]^2
-    clusters2 <- train$cluster2[which(train$cluster2 != 0)]
-    gmap_clusters3_train <- gmap_train[which(train$cluster3 != 0), ]^3
-    clusters3 <- train$cluster3[which(train$cluster3 != 0)]
+    gmap_clusters_train <- gmap_train[which(train$cluster_by_glasser != 0), ]
+    clusters <- train$cluster_by_glasser[which(train$cluster_by_glasser != 0)]
+    gmap_clusters2_train <- gmap_train[which(train$cluster_by_glasser2 != 0), ]^2
+    clusters2 <- train$cluster_by_glasser2[which(train$cluster_by_glasser2 != 0)]
+    gmap_clusters3_train <- gmap_train[which(train$cluster_by_glasser3 != 0), ]^3
+    clusters3 <- train$cluster_by_glasser3[which(train$cluster_by_glasser3 != 0)]
     gmap_clusters_train <- gmap_clusters_train[order(clusters), ] # order rows in dataframe by cluster
     gmap_clusters2_train <- gmap_clusters2_train[order(clusters2), ]
     gmap_clusters3_train <- gmap_clusters3_train[order(clusters3), ]
@@ -351,11 +410,11 @@ for (i in 1:10) {
     cluster_order3 <- clusters3[order(clusters3)]
     
     # Subset test gradient data frame by significant clusters in test data frame
-    gmap_clusters_test <- gmap_test[which(train$cluster != 0), ]
+    gmap_clusters_test <- gmap_test[which(train$cluster_by_glasser != 0), ]
     gmap_clusters_test <- gmap_clusters_test[order(clusters), ]
-    gmap_clusters2_test <- gmap_test[which(train$cluster2 != 0), ]^2
+    gmap_clusters2_test <- gmap_test[which(train$cluster_by_glasser2 != 0), ]^2
     gmap_clusters2_test <- gmap_clusters2_test[order(clusters2), ]
-    gmap_clusters3_test <- gmap_test[which(train$cluster3 != 0), ]^3
+    gmap_clusters3_test <- gmap_test[which(train$cluster_by_glasser3 != 0), ]^3
     gmap_clusters3_test <- gmap_clusters3_test[order(clusters3), ]
     # Create a data frame called cluster avg (ncol = number of clusters, nrow = number of training subjects)
     cluster_total <- n_cluster + n_cluster2 + n_cluster3
