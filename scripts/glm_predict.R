@@ -157,6 +157,58 @@ niitoGLM <- function(asmt, sublist, hemi, idx, df_cog) {
 }
 
 # A function to apply GLM based on list of subjects
+# Run second order polynomial on gradient
+# Parameters
+# asmt: name of cognitive assessment
+# sublist: vector of subjects
+# hemi: hemisphere (lh or rh)
+# idx: index of vertices
+# df_cog: dataframe of cognitive scores
+niitoGLM_poly2 <- function(asmt, sublist, hemi, idx, df_cog) {
+  print(asmt)
+  
+  gmap <- niitogmap(sublist, hemi)
+  
+  # run the model
+  ncolumn <- nvertex_on[[hemi]]
+  df <- data.frame(idx,
+                   gradient_t = numeric(ncolumn),
+                   gradient_p = numeric(ncolumn),
+                   gradient2_t = numeric(ncolumn),
+                   gradient2_p = numeric(ncolumn),
+                   sex_t = numeric(ncolumn),
+                   sex_p = numeric(ncolumn),
+                   age_t = numeric(ncolumn),
+                   age_p = numeric(ncolumn),
+                   rsquare = numeric(ncolumn),
+                   rsquare_adj = numeric(ncolumn))
+  df$gradient_p <- 1
+  df$sex_p <- 1
+  y <- df_cog[,asmt]
+  # lm model
+  for (i in 1:ncolumn){
+    if (i %% 500 == 0) {print(sprintf('->%d ', i))}
+    gradient <- gmap[i,]
+    dataframe <- data.frame(y, gradient, gradient2 = gradient^2, gradient3 = gradient^3, sex=df_cog$sex, age=df_cog$age)
+    try({fm <- lm(y ~ gradient + gradient2 + gradient3 + sex + age, data = dataframe)
+    output <- summary(fm)
+    df$gradient_t[i] <- output$coefficients['gradient', 't value']
+    df$gradient_p[i] <- output$coefficients['gradient', 'Pr(>|t|)']
+    df$gradient2_t[i] <- output$coefficients['gradient2', 't value']
+    df$gradient2_p[i] <- output$coefficients['gradient2', 'Pr(>|t|)']
+    df$sex_t[i] <- output$coefficients['sex1', 't value']
+    df$sex_p[i] <- output$coefficients['sex1', 'Pr(>|t|)']
+    df$age_t[i] <- output$coefficients['age', 't value']
+    df$age_p[i] <- output$coefficients['age', 'Pr(>|t|)']
+    df$rsquare[i] <- output$r.squared
+    df$rsquare_adj[i] <- output$adj.r.squared
+    df$lm_failed[i] <- 0
+    }, silent = TRUE)
+  }
+  df
+}
+
+# A function to apply GLM based on list of subjects
 # Run third order polynomial on gradient
 # Parameters
 # asmt: name of cognitive assessment
@@ -164,7 +216,7 @@ niitoGLM <- function(asmt, sublist, hemi, idx, df_cog) {
 # hemi: hemisphere (lh or rh)
 # idx: index of vertices
 # df_cog: dataframe of cognitive scores
-niitoGLM_poly <- function(asmt, sublist, hemi, idx, df_cog) {
+niitoGLM_poly3 <- function(asmt, sublist, hemi, idx, df_cog) {
   print(asmt)
   
   gmap <- niitogmap(sublist, hemi)
@@ -297,8 +349,8 @@ for (i in 1:10) {
   gmap_test_rh <- niitogmap(df_cog_test$index, 'rh')
   
   # Create data frame of linear model results
-  train_lh <- niitoGLM_poly(cog_name, df_cog_train$index, 'lh', as.numeric(rownames(gmap_train_lh)), df_cog_train)
-  train_rh <- niitoGLM_poly(cog_name, df_cog_train$index, 'rh', as.numeric(rownames(gmap_train_rh)), df_cog_train)
+  train_lh <- niitoGLM_poly2(cog_name, df_cog_train$index, 'lh', as.numeric(rownames(gmap_train_lh)), df_cog_train)
+  train_rh <- niitoGLM_poly2(cog_name, df_cog_train$index, 'rh', as.numeric(rownames(gmap_train_rh)), df_cog_train)
   outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s/%s", groupDir, cog_name, i)
   dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   for (hemi in hemis) {
@@ -332,20 +384,21 @@ for (i in 1:10) {
     sig_clusters[, i] <- img[,1]
     assign(paste0("sig_clusters2_", hemi), sig_clusters)
     train$cluster2 <- img[idx]
-    
-    fname <- GLMtonii(glmdir = glmdir, outdir = outdir, variable = "gradient3", vertices = idx, hemi = hemi, df = train)
-    img <- nifti.image.read(fname)
-    sig_clusters <- get(paste0("sig_clusters3_", hemi))
-    sig_clusters[, i] <- img[,1]
-    assign(paste0("sig_clusters3_", hemi), sig_clusters)
-    train$cluster3 <- img[idx]
+
+    # fname <- GLMtonii(glmdir = glmdir, outdir = outdir, variable = "gradient3", vertices = idx, hemi = hemi, df = train)
+    # img <- nifti.image.read(fname)
+    # sig_clusters <- get(paste0("sig_clusters3_", hemi))
+    # sig_clusters[, i] <- img[,1]
+    # assign(paste0("sig_clusters3_", hemi), sig_clusters)
+    # train$cluster3 <- img[idx]
     
     n_cluster <- max(train$cluster)
     n_cluster2 <- max(train$cluster2)
-    n_cluster3 <- max(train$cluster3)
+    # n_cluster3 <- max(train$cluster3)
 
     # Skip to next iteration of loop if there are no significant clusters
-    if (n_cluster == 0 & n_cluster2 == 0 & n_cluster3 == 0) {
+    #if (n_cluster == 0 & n_cluster2 == 0 & n_cluster3 == 0) {
+    if (n_cluster == 0 & n_cluster2 == 0) {
       print(paste0('No significant cluster for ', cog_name, ' gradient_pvalue iteration ', i))
       next
     }
@@ -358,7 +411,7 @@ for (i in 1:10) {
       for (j in 1:n_cluster) {
         glasser_clusters <- unique(train$glasser[which(train$cluster == j)])
         for (k in glasser_clusters[which(glasser_clusters != 0)]) {
-          if (sum(train$cluster == j & train$glasser == k) > 1) {
+          if (sum(train$cluster == j & train$glasser == k) >= 7) {
             train$cluster_by_glasser[which(train$cluster == j & train$glasser == k)] <- cluster_idx
             cluster_idx <- cluster_idx + 1
           }
@@ -372,7 +425,7 @@ for (i in 1:10) {
       for (j in 1:n_cluster2) {
         glasser_clusters <- unique(train$glasser[which(train$cluster2 == j)])
         for (k in glasser_clusters[which(glasser_clusters != 0)]) {
-          if (sum(train$cluster2 == j & train$glasser == k) > 1) {
+          if (sum(train$cluster2 == j & train$glasser == k) >= 7) {
             train$cluster_by_glasser2[which(train$cluster2 == j & train$glasser == k)] <- cluster_idx
             cluster_idx <- cluster_idx + 1
           }
@@ -380,50 +433,50 @@ for (i in 1:10) {
       }
     }
     
-    cluster_idx <- 1
-    train$cluster_by_glasser3 <- 0
-    if (n_cluster3 > 0) {
-      for (j in 1:n_cluster3) {
-        glasser_clusters <- unique(train$glasser[which(train$cluster3 == j)])
-        for (k in glasser_clusters[which(glasser_clusters != 0)]) {
-          if (sum(train$cluster3 == j & train$glasser == k) > 1) {
-            train$cluster_by_glasser3[which(train$cluster3 == j & train$glasser == k)] <- cluster_idx
-            cluster_idx <- cluster_idx + 1
-          }
-        }
-      }
-    }
-    
+    # cluster_idx <- 1
+    # train$cluster_by_glasser3 <- 0
+    # if (n_cluster3 > 0) {
+    #   for (j in 1:n_cluster3) {
+    #     glasser_clusters <- unique(train$glasser[which(train$cluster3 == j)])
+    #     for (k in glasser_clusters[which(glasser_clusters != 0)]) {
+    #       if (sum(train$cluster3 == j & train$glasser == k) >= 7) {
+    #         train$cluster_by_glasser3[which(train$cluster3 == j & train$glasser == k)] <- cluster_idx
+    #         cluster_idx <- cluster_idx + 1
+    #       }
+    #     }
+    #   }
+    # }
+
     fname <- paste0(outdir, '/train_', hemi ,'.csv')
     write.csv(train, fname)
     
     n_cluster <- max(train$cluster_by_glasser)
     n_cluster2 <- max(train$cluster_by_glasser2)
-    n_cluster3 <- max(train$cluster_by_glasser3)
+    # n_cluster3 <- max(train$cluster_by_glasser3)
     
     # For training gradient data frame, subset vertices in significant cluster
     gmap_clusters_train <- gmap_train[which(train$cluster_by_glasser != 0), ]
     clusters <- train$cluster_by_glasser[which(train$cluster_by_glasser != 0)]
     gmap_clusters2_train <- gmap_train[which(train$cluster_by_glasser2 != 0), ]^2
     clusters2 <- train$cluster_by_glasser2[which(train$cluster_by_glasser2 != 0)]
-    gmap_clusters3_train <- gmap_train[which(train$cluster_by_glasser3 != 0), ]^3
-    clusters3 <- train$cluster_by_glasser3[which(train$cluster_by_glasser3 != 0)]
+    # gmap_clusters3_train <- gmap_train[which(train$cluster_by_glasser3 != 0), ]^3
+    # clusters3 <- train$cluster_by_glasser3[which(train$cluster_by_glasser3 != 0)]
     gmap_clusters_train <- gmap_clusters_train[order(clusters), ] # order rows in dataframe by cluster
     gmap_clusters2_train <- gmap_clusters2_train[order(clusters2), ]
-    gmap_clusters3_train <- gmap_clusters3_train[order(clusters3), ]
+    # gmap_clusters3_train <- gmap_clusters3_train[order(clusters3), ]
     cluster_order <- clusters[order(clusters)]
     cluster_order2 <- clusters2[order(clusters2)]
-    cluster_order3 <- clusters3[order(clusters3)]
+    # cluster_order3 <- clusters3[order(clusters3)]
     
     # Subset test gradient data frame by significant clusters in test data frame
     gmap_clusters_test <- gmap_test[which(train$cluster_by_glasser != 0), ]
     gmap_clusters_test <- gmap_clusters_test[order(clusters), ]
     gmap_clusters2_test <- gmap_test[which(train$cluster_by_glasser2 != 0), ]^2
     gmap_clusters2_test <- gmap_clusters2_test[order(clusters2), ]
-    gmap_clusters3_test <- gmap_test[which(train$cluster_by_glasser3 != 0), ]^3
-    gmap_clusters3_test <- gmap_clusters3_test[order(clusters3), ]
+    # gmap_clusters3_test <- gmap_test[which(train$cluster_by_glasser3 != 0), ]^3
+    # gmap_clusters3_test <- gmap_clusters3_test[order(clusters3), ]
     # Create a data frame called cluster avg (ncol = number of clusters, nrow = number of training subjects)
-    cluster_total <- n_cluster + n_cluster2 + n_cluster3
+    cluster_total <- n_cluster + n_cluster2# + n_cluster3
     cluster_avg_train <- matrix(data = NA, nrow = ncol(gmap_train), ncol = cluster_total)
     cluster_avg_test <- matrix(data = NA, nrow = ncol(gmap_test), ncol = cluster_total)
     
@@ -447,15 +500,15 @@ for (i in 1:10) {
         j <- j + 1
       }
     }
-    if (n_cluster3 >  0) {
-      for (k in 1:n_cluster3) {
-        gmap_cluster_train_n <- gmap_clusters3_train[which(cluster_order3 == k), ]
-        gmap_cluster_test_n <- gmap_clusters3_test[which(cluster_order3 == k), ]
-        cluster_avg_train[, j] <- colMeans(gmap_cluster_train_n)
-        cluster_avg_test[, j] <- colMeans(gmap_cluster_test_n)
-        j <- j + 1
-      }
-    }
+    # if (n_cluster3 >  0) {
+    #   for (k in 1:n_cluster3) {
+    #     gmap_cluster_train_n <- gmap_clusters3_train[which(cluster_order3 == k), ]
+    #     gmap_cluster_test_n <- gmap_clusters3_test[which(cluster_order3 == k), ]
+    #     cluster_avg_train[, j] <- colMeans(gmap_cluster_train_n)
+    #     cluster_avg_test[, j] <- colMeans(gmap_cluster_test_n)
+    #     j <- j + 1
+    #   }
+    # }
     # create training and test data frames with cluster averages, subject index, age, sex, and cognitive score
     col_names <- c()
     if (n_cluster > 0) {
@@ -464,9 +517,9 @@ for (i in 1:10) {
     if (n_cluster2 > 0) {
       col_names <- c(col_names, paste0("cluster2_", 1:n_cluster2))
     }
-    if (n_cluster3 > 0) {
-      col_names <- c(col_names, paste0("cluster3_", 1:n_cluster3))
-    }
+    # if (n_cluster3 > 0) {
+    #   col_names <- c(col_names, paste0("cluster3_", 1:n_cluster3))
+    # }
     col_names <- c(col_names, "index", "age", "sex", cog_name)
     cluster_avg_train <- data.frame(cluster_avg_train, df_cog_train[, c("index", "age", "sex", cog_name)])
     names(cluster_avg_train) <- col_names
@@ -476,13 +529,20 @@ for (i in 1:10) {
     # Run generalized linear model for clusters, age, and sex
     
     run_glm <- paste0("glm(", cog_name, " ~ ", 
-                      paste(c(names(cluster_avg_train)[1:cluster_total]), collapse = " + "),
+                      paste(c(names(cluster_avg_train)[1:(cluster_total)]), collapse = " + "),
                       " + age + sex, data = cluster_avg_train)")
     glm_result <- eval(parse(text = run_glm))
+    run_lm <- paste0("lm(", cog_name, " ~ ", 
+                      paste(c(names(cluster_avg_train)[1:(cluster_total)]), collapse = " + "),
+                      " + age + sex, data = cluster_avg_train)")
+    lm_result <- eval(parse(text = run_lm))
     coefficients <- glm_result$coefficients
+    lm_coefficients <- lm_result$coefficients
     
     # Use glm to predict cognitive score for test dataset
-    cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict.glm(glm_result, newdata = cluster_avg_test,
+    #cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict.glm(glm_result, newdata = cluster_avg_test,
+    #                                                              type = "response")
+    cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict.glm(lm_result, newdata = cluster_avg_test,
                                                                   type = "response")
     
     # png(paste0(outdir, "/glm_", xname, "_pvalue_", hemi, ".png"))
