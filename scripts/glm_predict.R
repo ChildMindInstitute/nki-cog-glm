@@ -71,8 +71,6 @@ remove_outliers <- function(x, na.rm = TRUE, ...) {
   y
 }
 
-
-# First remove outliers
 ncog <- length(cog_names)
 
 # Convert NKI ROI masks
@@ -124,6 +122,7 @@ niitoGLM <- function(asmt, sublist, hemi, idx, df_cog) {
   # run the model
   ncolumn <- nvertex_on[[hemi]]
   df <- data.frame(idx,
+                   hemi,
                    gradient_t = numeric(ncolumn),
                    gradient_p = numeric(ncolumn),
                    sex_t = numeric(ncolumn),
@@ -132,6 +131,7 @@ niitoGLM <- function(asmt, sublist, hemi, idx, df_cog) {
                    age_p = numeric(ncolumn),
                    rsquare = numeric(ncolumn),
                    rsquare_adj = numeric(ncolumn))
+  df$hemi <- hemi
   df$gradient_p <- 1
   df$sex_p <- 1
   y <- df_cog[,asmt]
@@ -172,6 +172,7 @@ niitoGLM_poly2 <- function(asmt, sublist, hemi, idx, df_cog) {
   # run the model
   ncolumn <- nvertex_on[[hemi]]
   df <- data.frame(idx,
+                   hemi,
                    gradient_t = numeric(ncolumn),
                    gradient_p = numeric(ncolumn),
                    gradient2_t = numeric(ncolumn),
@@ -182,6 +183,7 @@ niitoGLM_poly2 <- function(asmt, sublist, hemi, idx, df_cog) {
                    age_p = numeric(ncolumn),
                    rsquare = numeric(ncolumn),
                    rsquare_adj = numeric(ncolumn))
+  df$hemi <- hemi
   df$gradient_p <- 1
   df$sex_p <- 1
   y <- df_cog[,asmt]
@@ -224,6 +226,7 @@ niitoGLM_poly3 <- function(asmt, sublist, hemi, idx, df_cog) {
   # run the model
   ncolumn <- nvertex_on[[hemi]]
   df <- data.frame(idx,
+                   hemi,
                    gradient_t = numeric(ncolumn),
                    gradient_p = numeric(ncolumn),
                    gradient2_t = numeric(ncolumn),
@@ -236,6 +239,7 @@ niitoGLM_poly3 <- function(asmt, sublist, hemi, idx, df_cog) {
                    age_p = numeric(ncolumn),
                    rsquare = numeric(ncolumn),
                    rsquare_adj = numeric(ncolumn))
+  df$hemi <- hemi
   df$gradient_p <- 1
   df$sex_p <- 1
   y <- df_cog[,asmt]
@@ -311,6 +315,8 @@ colnames(cog_data_all_rm_outliers) <- c('index', 'subject', 'age', 'sex', cog_na
 
 idx_sub <- which(is.na(cog_data_all_rm_outliers[,cog_name])==FALSE) # indices of subjects with cognitive score within range
 df_cog <- cog_data_all_rm_outliers[idx_sub, ]
+df_cog$age <- df_cog$age - mean(df_cog$age) # demean age
+
 
 set.seed(123)
 df_cog$group <- sample(rep(seq_len(10), length.out = nrow(df_cog))) # Randomly split subjects into 10 groups
@@ -324,15 +330,15 @@ write.csv(df_cog, fname)
 
 # Create a dataframe for test predication data
 test_data_all <- data.frame(index = numeric(), actual = numeric(), predicted = numeric(), 
-                         hemi = character(), group = numeric(), stringsAsFactors = FALSE)
-names(test_data_all) <- c("subject", cog_name, paste0(cog_name, "_predicted"), "hemi", "group")
+                         group = numeric(), stringsAsFactors = FALSE)
+names(test_data_all) <- c("subject", cog_name, paste0(cog_name, "_predicted"), "group")
 
 sig_clusters_lh <- matrix(data = NA, nrow = Nvertex_32k, ncol = 10)
 sig_clusters2_lh <- matrix(data = NA, nrow = Nvertex_32k, ncol = 10)
-sig_clusters3_lh <- matrix(data = NA, nrow = Nvertex_32k, ncol = 10)
+# sig_clusters3_lh <- matrix(data = NA, nrow = Nvertex_32k, ncol = 10)
 sig_clusters_rh <- matrix(data = NA, nrow = Nvertex_32k, ncol = 10)
 sig_clusters2_rh <- matrix(data = NA, nrow = Nvertex_32k, ncol = 10)
-sig_clusters3_rh <- matrix(data = NA, nrow = Nvertex_32k, ncol = 10)
+# sig_clusters3_rh <- matrix(data = NA, nrow = Nvertex_32k, ncol = 10)
 
 for (i in 1:10) {
   outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s/%s", groupDir, cog_name, i)
@@ -353,6 +359,10 @@ for (i in 1:10) {
   train_rh <- niitoGLM_poly2(cog_name, df_cog_train$index, 'rh', as.numeric(rownames(gmap_train_rh)), df_cog_train)
   outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/%s/%s", groupDir, cog_name, i)
   dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+  
+  n_cluster_total <- 0
+  
+  
   for (hemi in hemis) {
     gmap_train <- get(paste0('gmap_train_', hemi))
     gmap_test <- get(paste0('gmap_test_', hemi))
@@ -395,6 +405,10 @@ for (i in 1:10) {
     n_cluster <- max(train$cluster)
     n_cluster2 <- max(train$cluster2)
     # n_cluster3 <- max(train$cluster3)
+    
+    fname <- paste0(outdir, '/train_', hemi ,'.csv')
+    write.csv(train, fname)
+    assign(paste0("train_", hemi), train)
 
     # Skip to next iteration of loop if there are no significant clusters
     #if (n_cluster == 0 & n_cluster2 == 0 & n_cluster3 == 0) {
@@ -433,6 +447,7 @@ for (i in 1:10) {
       }
     }
     
+    
     # cluster_idx <- 1
     # train$cluster_by_glasser3 <- 0
     # if (n_cluster3 > 0) {
@@ -447,8 +462,6 @@ for (i in 1:10) {
     #   }
     # }
 
-    fname <- paste0(outdir, '/train_', hemi ,'.csv')
-    write.csv(train, fname)
     
     n_cluster <- max(train$cluster_by_glasser)
     n_cluster2 <- max(train$cluster_by_glasser2)
@@ -475,6 +488,7 @@ for (i in 1:10) {
     gmap_clusters2_test <- gmap_clusters2_test[order(clusters2), ]
     # gmap_clusters3_test <- gmap_test[which(train$cluster_by_glasser3 != 0), ]^3
     # gmap_clusters3_test <- gmap_clusters3_test[order(clusters3), ]
+    
     # Create a data frame called cluster avg (ncol = number of clusters, nrow = number of training subjects)
     cluster_total <- n_cluster + n_cluster2# + n_cluster3
     cluster_avg_train <- matrix(data = NA, nrow = ncol(gmap_train), ncol = cluster_total)
@@ -512,28 +526,48 @@ for (i in 1:10) {
     # create training and test data frames with cluster averages, subject index, age, sex, and cognitive score
     col_names <- c()
     if (n_cluster > 0) {
-      col_names <- c(col_names, paste0("cluster_", 1:n_cluster))
+      col_names <- c(col_names, paste0("cluster_", 1:n_cluster, "_", hemi))
     }
     if (n_cluster2 > 0) {
-      col_names <- c(col_names, paste0("cluster2_", 1:n_cluster2))
+      col_names <- c(col_names, paste0("cluster2_", 1:n_cluster2, "_", hemi))
     }
     # if (n_cluster3 > 0) {
-    #   col_names <- c(col_names, paste0("cluster3_", 1:n_cluster3))
+    #   col_names <- c(col_names, paste0("cluster3_", 1:n_cluster3, "_", hemi))
     # }
     col_names <- c(col_names, "index", "age", "sex", cog_name)
     cluster_avg_train <- data.frame(cluster_avg_train, df_cog_train[, c("index", "age", "sex", cog_name)])
     names(cluster_avg_train) <- col_names
     cluster_avg_test <- data.frame(cluster_avg_test, df_cog_test[, c("index", "age", "sex", cog_name)])
     names(cluster_avg_test) <- col_names
+    assign(paste0("cluster_avg_train_", hemi), cluster_avg_train)
+    assign(paste0("cluster_avg_test_", hemi), cluster_avg_test)
     
+    remove(train)
+    remove(cluster_avg_train)
+    remove(cluster_avg_test)
+    
+    n_cluster_total <- n_cluster_total + cluster_total
+  }
+  if (n_cluster_total > 0) {
+    train <- rbind(train_lh, train_rh)
+    cluster_avg_train <- merge(cluster_avg_train_lh, cluster_avg_train_rh, by = c("index", "age", "sex", cog_name))
+    cluster_avg_test <- merge(cluster_avg_test_lh, cluster_avg_test_rh, by = c("index", "age", "sex", cog_name))
+  
+    # Demean cluster averages
+    cluster_avg_all <- rbind(cluster_avg_train, cluster_avg_test)
+    cluster_avg_all[, 5:ncol(cluster_avg_all)] <- lapply(cluster_avg_all[, 5:ncol(cluster_avg_all)], function(x) {x - mean(x)})
+    
+    cluster_avg_train <- cluster_avg_all[cluster_avg_all$index %in% cluster_avg_train$index, ]
+    cluster_avg_test <- cluster_avg_all[cluster_avg_all$index %in% cluster_avg_test$index, ]
+      
     # Run generalized linear model for clusters, age, and sex
     
     run_glm <- paste0("glm(", cog_name, " ~ ", 
-                      paste(c(names(cluster_avg_train)[1:(cluster_total)]), collapse = " + "),
+                      paste(c(names(cluster_avg_train)[5:ncol(cluster_avg_train)]), collapse = " + "),
                       " + age + sex, data = cluster_avg_train)")
     glm_result <- eval(parse(text = run_glm))
     run_lm <- paste0("lm(", cog_name, " ~ ", 
-                      paste(c(names(cluster_avg_train)[1:(cluster_total)]), collapse = " + "),
+                      paste(c(names(cluster_avg_train)[5:ncol(cluster_avg_train)]), collapse = " + "),
                       " + age + sex, data = cluster_avg_train)")
     lm_result <- eval(parse(text = run_lm))
     coefficients <- glm_result$coefficients
@@ -542,7 +576,7 @@ for (i in 1:10) {
     # Use glm to predict cognitive score for test dataset
     #cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict.glm(glm_result, newdata = cluster_avg_test,
     #                                                              type = "response")
-    cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict.glm(lm_result, newdata = cluster_avg_test,
+    cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict(lm_result, newdata = cluster_avg_test,
                                                                   type = "response")
     
     # png(paste0(outdir, "/glm_", xname, "_pvalue_", hemi, ".png"))
@@ -551,23 +585,16 @@ for (i in 1:10) {
     # abline(a=0, b=1, col="red")
     # dev.off()
     
-    cluster_avg_train$hemi <- hemi
-    cluster_avg_test$hemi <- hemi
     cluster_avg_train$group <- i
     cluster_avg_test$group <- i
     
     # Combine prediction data with prediction data from previous iterations
-    test_data_all <- rbind(test_data_all, cluster_avg_test[, c("index", cog_name, paste0(cog_name, "_predicted"),
-                                                                 "hemi", "group")])
     
+    predict <- cluster_avg_test[, c("index", cog_name, paste0(cog_name, "_predicted"),
+                                    "group")]
+    test_data_all <- rbind(test_data_all, predict)
     
-    write.csv(cluster_avg_train, paste0(outdir, "/gradient_pvalue_", "cluster_avg_train_", hemi, ".csv"), row.names = FALSE)
-    write.csv(cluster_avg_test, paste0(outdir, "/gradient_pvalue_", "cluster_avg_test_", hemi, ".csv"), row.names = FALSE)
-  }
-  predict <- test_data_all[which(test_data_all$group == i), ]
-  
-  # Plot prediction data
-  if (nrow(predict) > 0) {
+    # Plot prediction data=
     model <- summary(lm(predict[, 3] ~ predict[, 2]))
     p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
     r <- round(cor(predict[, 3], predict[, 2], method = "pearson"), digits = 3)
@@ -576,13 +603,16 @@ for (i in 1:10) {
     max <- ceiling(max(predict[, 2:3])/10)*10
     
     ggplot(predict, aes(x = predict[, 2], y = predict[, 3])) + 
-      geom_point(aes(colour = factor(hemi))) + 
+      geom_point() + 
       geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
-      labs(x = cog_name, y = paste(cog_name, " Predicted"), color = "Hemisphere", title = "gradient p_value") +
+      labs(x = cog_name, y = paste(cog_name, " Predicted"), title = "gradient p_value") +
       lims(x = c(min, max),
-          y = c(min, max)) +
+           y = c(min, max)) +
       annotate("text", x = min, y = max - 5,  label = paste0("p = ", p, "\nr = ", r), hjust = 0)
     ggsave(paste0(outdir, "/glm_gradient_pvalue.png"))
+  
+    write.csv(cluster_avg_train, paste0(outdir, "/gradient_pvalue_", "cluster_avg_train.csv"), row.names = FALSE)
+    write.csv(cluster_avg_test, paste0(outdir, "/gradient_pvalue_", "cluster_avg_test.csv"), row.names = FALSE)
   }
 }
 
@@ -615,7 +645,7 @@ predict$age <- df_cog$age[match(predict$index, df_cog$index)]
 predict$sex <- df_cog$sex[match(predict$index, df_cog$index)]
 
 if (nrow(predict) > 0) {
-  predict$age_group <- cut(predict$age, c(6, 20, 40, 60, 85), include.lowest=TRUE) # Define age groups for subjects
+  predict$age_group <- cut(predict$age, c(-40, -20, 5, 25, 45), include.lowest=TRUE) # Define age groups for subjects
   model <- summary(lm(predict[, 2] ~ predict[, 3]))
   p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
   r <- round(cor(predict[, 3], predict[, 2], method = "pearson"), digits = 3)
@@ -624,10 +654,9 @@ if (nrow(predict) > 0) {
   max <- ceiling(max(predict[, 2:3])/10)*10
   
   ggplot(predict, aes(x = predict[, 2], y = predict[, 3])) + 
-    geom_point(aes(shape = factor(hemi), colour = age_group)) + 
+    geom_point(aes(colour = age_group)) + 
     geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
-    labs(x = cog_name, y = paste(cog_name, " Predicted"), color = "Age Group", shape = "Hemisphere", 
-         title = "gradient p_value all") +
+    labs(x = cog_name, y = paste(cog_name, " Predicted"), color = "Age Group (Demeaned)", title = "gradient p_value all") +
     lims(x = c(min, max),
          y = c(min, max)) +
     annotate("text", x = min, y = max - 5,  label = paste0("p = ", p, "\nr = ", r), hjust = 0)
