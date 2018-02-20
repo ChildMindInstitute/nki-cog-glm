@@ -88,7 +88,8 @@ for (h in 1:2){
 # Parameters
 # sublist: vector of subjects
 # hemi: hemisphere (lh or rh)
-niitogmap <- function(sublist, hemi) {
+# raw: if TRUE, use raw gradient map. if FALSE (default), use age-regressed gradient map
+niitogmap <- function(sublist, hemi, raw = FALSE) {
   # load mask
   print('read in brainmask 32k surface')
   fname <- paste0(groupDir, "/masks/", hemi, ".brain.NKI323.wb.32k_fs_LR.nii.gz")
@@ -99,7 +100,11 @@ niitogmap <- function(sublist, hemi) {
   
   # load gradient residual data
   print('reading data')
-  fname <- paste0(glmdir, '/y_cov_residual.', hemi, '.32k_fs_LR.nii.gz')
+  if (raw) {
+    fname <- paste0(glmdir, '/y_cov_residual.', hemi, '.32k_fs_LR.nii.gz')
+  } else {
+    fname <- paste0(groupDir, '/boundary/GLM/gradient/y_4D_gradient.', hemi, '.32k_fs_LR.nii.gz')
+  }
   img <- nifti.image.read(fname)
   Nvertex <- img$dim[1]
   gmap <- img[idx,1,1,sublist]
@@ -413,7 +418,8 @@ for (i in 1:10) {
     # Skip to next iteration of loop if there are no significant clusters
     #if (n_cluster == 0 & n_cluster2 == 0 & n_cluster3 == 0) {
     if (n_cluster == 0 & n_cluster2 == 0) {
-      print(paste0('No significant cluster for ', cog_name, ' gradient_pvalue iteration ', i))
+      assign(paste0('cluster_avg_train_', hemi), df_cog_train[, c("index", "age", "sex", cog_name)])
+      assign(paste0('cluster_avg_test_', hemi), df_cog_test[, c("index", "age", "sex", cog_name)])
       next
     }
     
@@ -598,6 +604,7 @@ for (i in 1:10) {
     model <- summary(lm(predict[, 3] ~ predict[, 2]))
     p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
     r <- round(cor(predict[, 3], predict[, 2], method = "pearson"), digits = 3)
+    rmse <- round(sqrt(mean((model$residuals)^2)), digits = 3)
     
     min <- floor(min(predict[, 2:3])/10)*10
     max <- ceiling(max(predict[, 2:3])/10)*10
@@ -608,7 +615,7 @@ for (i in 1:10) {
       labs(x = cog_name, y = paste(cog_name, " Predicted"), title = "gradient p_value") +
       lims(x = c(min, max),
            y = c(min, max)) +
-      annotate("text", x = min, y = max - 5,  label = paste0("p = ", p, "\nr = ", r), hjust = 0)
+      annotate("text", x = min, y = max - 5,  label = paste0("p = ", p, "\nr = ", r, "\nRMSE = ", rmse), hjust = 0)
     ggsave(paste0(outdir, "/glm_gradient_pvalue.png"))
   
     write.csv(cluster_avg_train, paste0(outdir, "/gradient_pvalue_", "cluster_avg_train.csv"), row.names = FALSE)
@@ -616,8 +623,8 @@ for (i in 1:10) {
   }
 }
 
-
-for (j in c("sig_clusters_lh", "sig_clusters_rh", "sig_clusters2_lh", "sig_clusters2_rh", "sig_clusters3_lh", "sig_clusters3_rh")) {
+for (j in c("sig_clusters_lh", "sig_clusters_rh", "sig_clusters2_lh", "sig_clusters2_rh")) {
+#for (j in c("sig_clusters_lh", "sig_clusters_rh", "sig_clusters2_lh", "sig_clusters2_rh", "sig_clusters3_lh", "sig_clusters3_rh")) {
   hemi <- substring(j, nchar(j) - 1)
   fname <- paste0(groupDir, "/masks/", hemi, ".brain.NKI323.wb.32k_fs_LR.nii.gz")
   img <- nifti.image.read(fname)
@@ -649,6 +656,7 @@ if (nrow(predict) > 0) {
   model <- summary(lm(predict[, 2] ~ predict[, 3]))
   p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
   r <- round(cor(predict[, 3], predict[, 2], method = "pearson"), digits = 3)
+  rmse <- round(sqrt(mean((model$residuals)^2)), digits = 3)
   
   min <- floor(min(predict[, 2:3])/10)*10
   max <- ceiling(max(predict[, 2:3])/10)*10
@@ -659,7 +667,7 @@ if (nrow(predict) > 0) {
     labs(x = cog_name, y = paste(cog_name, " Predicted"), color = "Age Group (Demeaned)", title = "gradient p_value all") +
     lims(x = c(min, max),
          y = c(min, max)) +
-    annotate("text", x = min, y = max - 5,  label = paste0("p = ", p, "\nr = ", r), hjust = 0)
+    annotate("text", x = min, y = max - 5,  label = paste0("p = ", p, "\nr = ", r, "\nRMSE = ", rmse), hjust = 0)
   ggsave(paste0(outdir, "/glm_gradient_pvalue_all.png"))
   write.csv(predict, paste0(outdir, "/glm_gradient_predict_all.csv"))
 }
