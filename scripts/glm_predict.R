@@ -55,8 +55,6 @@ cog_df_list <- list(basic, cog_data_test)
 cog_data_all <- Reduce(function(x, y) merge(x, y, all=TRUE, 
                                             by=c("subject", "age")), cog_df_list, accumulate=FALSE)
 
-cog_names <- c("WASI_VCI_Comp", "WASI_PRI_Comp", "WASI_FSIQ", "WIAT_Word_Reading", "WIAT_Num", "WIAT_Spelling", "WIAT_Comp")
-cog_age_normize_list <- c("WIAT_Word_Reading", "WIAT_Num", "WIAT_Spelling", "WIAT_Comp")
 
 # Remove outliers from a column
 # Parameters
@@ -69,19 +67,6 @@ remove_outliers <- function(x, na.rm = TRUE, ...) {
   y[x < (qnt[1] - H)] <- NA
   y[x > (qnt[2] + H)] <- NA
   y
-}
-
-ncog <- length(cog_names)
-
-# Convert NKI ROI masks
-for (h in 1:2){
-  hemi <- hemis[h]
-  Hemisphere <- Hemispheres[h]
-  
-  fname = paste0(groupDir, "/masks/", hemi, ".brain.NKI323.wb.32k_fs_LR.nii.gz")
-  gname = paste0(groupDir, "/masks/", Hemisphere, ".brain.NKI323.wb.32k_fs_LR.shape.gii") 
-  scommand <- paste0("sh xt_nii2gii_32k_fs_LR.sh ", fname, " ", gname, " ", Hemisphere)
-  system(scommand)
 }
 
 # A function to extract gradient map based on list of subjects
@@ -353,11 +338,11 @@ for (i in 1:10) {
   df_cog_train <- df_cog[which(df_cog$group != i),] # Subset cognitive data into training group
   
   # Get gradient data for training group
-  gmap_train_lh <- niitogmap(df_cog_train$index, 'lh')
-  gmap_train_rh <- niitogmap(df_cog_train$index, 'rh')
+  gmap_train_lh <- niitogmap(df_cog_train$index, 'lh', raw = TRUE)
+  gmap_train_rh <- niitogmap(df_cog_train$index, 'rh', raw = TRUE)
   # Get gradient data for test group
-  gmap_test_lh <- niitogmap(df_cog_test$index, 'lh')
-  gmap_test_rh <- niitogmap(df_cog_test$index, 'rh')
+  gmap_test_lh <- niitogmap(df_cog_test$index, 'lh', raw = TRUE)
+  gmap_test_rh <- niitogmap(df_cog_test$index, 'rh', raw = TRUE)
   
   # Create data frame of linear model results
   train_lh <- niitoGLM_poly2(cog_name, df_cog_train$index, 'lh', as.numeric(rownames(gmap_train_lh)), df_cog_train)
