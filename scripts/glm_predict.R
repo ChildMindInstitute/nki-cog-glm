@@ -74,7 +74,7 @@ remove_outliers <- function(x, na.rm = TRUE, ...) {
 # sublist: vector of subjects
 # hemi: hemisphere (lh or rh)
 # raw: if TRUE, use raw gradient map. if FALSE (default), use age-regressed gradient map
-niitogmap <- function(sublist, hemi, raw = FALSE) {
+niitogmap <- function(sublist, hemi, raw = FALSE, demeaned = FALSE) {
   # load mask
   print('read in brainmask 32k surface')
   fname <- paste0(groupDir, "/masks/", hemi, ".brain.NKI323.wb.32k_fs_LR.nii.gz")
@@ -86,14 +86,17 @@ niitogmap <- function(sublist, hemi, raw = FALSE) {
   # load gradient residual data
   print('reading data')
   if (raw) {
-    fname <- paste0(glmdir, '/y_cov_residual.', hemi, '.32k_fs_LR.nii.gz')
-  } else {
     fname <- paste0(groupDir, '/boundary/GLM/gradient/y_4D_gradient.', hemi, '.32k_fs_LR.nii.gz')
+  } else {
+    fname <- paste0(glmdir, '/y_cov_residual.', hemi, '.32k_fs_LR.nii.gz')
   }
   img <- nifti.image.read(fname)
   Nvertex <- img$dim[1]
   gmap <- img[idx,1,1,sublist]
   rownames(gmap) <- idx
+  if (demeaned) {
+    gmap <- apply(gmap, 2, function(x) {x - mean(x)})
+  }
   gmap
 }
 
@@ -104,10 +107,10 @@ niitogmap <- function(sublist, hemi, raw = FALSE) {
 # hemi: hemisphere (lh or rh)
 # idx: index of vertices
 # df_cog: dataframe of cognitive scores
-niitoGLM <- function(asmt, sublist, hemi, idx, df_cog) {
+niitoGLM <- function(asmt, sublist, hemi, idx, df_cog, gmap_raw = TRUE, gmap_demeaned = TRUE) {
   print(asmt)
 
-  gmap <- niitogmap(sublist, hemi)
+  gmap <- niitogmap(sublist, hemi, gmap_raw, gmap_demeaned)
   
   # run the model
   ncolumn <- nvertex_on[[hemi]]
@@ -154,10 +157,10 @@ niitoGLM <- function(asmt, sublist, hemi, idx, df_cog) {
 # hemi: hemisphere (lh or rh)
 # idx: index of vertices
 # df_cog: dataframe of cognitive scores
-niitoGLM_poly2 <- function(asmt, sublist, hemi, idx, df_cog) {
+niitoGLM_poly2 <- function(asmt, sublist, hemi, idx, df_cog, gmap_raw = TRUE, gmap_demeaned = TRUE) {
   print(asmt)
   
-  gmap <- niitogmap(sublist, hemi)
+  gmap <- niitogmap(sublist, hemi, gmap_raw, gmap_demeaned)
   
   # run the model
   ncolumn <- nvertex_on[[hemi]]
@@ -208,10 +211,10 @@ niitoGLM_poly2 <- function(asmt, sublist, hemi, idx, df_cog) {
 # hemi: hemisphere (lh or rh)
 # idx: index of vertices
 # df_cog: dataframe of cognitive scores
-niitoGLM_poly3 <- function(asmt, sublist, hemi, idx, df_cog) {
+niitoGLM_poly3 <- function(asmt, sublist, hemi, idx, df_cog, gmap_raw = TRUE, gmap_demeaned = TRUE) {
   print(asmt)
   
-  gmap <- niitogmap(sublist, hemi)
+  gmap <- niitogmap(sublist, hemi, gmap_raw, gmap_demeaned)
   
   # run the model
   ncolumn <- nvertex_on[[hemi]]
@@ -310,7 +313,12 @@ df_cog$age <- df_cog$age - mean(df_cog$age) # demean age
 
 set.seed(123)
 df_cog$group <- sample(rep(seq_len(10), length.out = nrow(df_cog))) # Randomly split subjects into 10 groups
-df_tmp <- data.frame(age = df_cog$age - mean(df_cog$age), y = df_cog[,cog_name])
+#gmap_lh <- niitogmap(df_cog$index, 'lh', raw = TRUE)
+gmap_lh <- niitogmap(df_cog$index, 'lh', raw = TRUE, demeaned = FALSE)
+colnames(gmap_lh) <- df_cog$index
+#gmap_rh <- niitogmap(df_cog$index, 'rh', raw = TRUE)
+gmap_rh <- niitogmap(df_cog$index, 'rh', raw = TRUE, demeaned = FALSE)
+colnames(gmap_rh) <- df_cog$index
 
 # if (cog_name %in% cog_age_normize_list){
 #   df_cog[, cog_name] <- resid(lm(y ~ 0 + df_tmp$age, df_tmp, na.action = na.exclude))
@@ -318,7 +326,7 @@ df_tmp <- data.frame(age = df_cog$age - mean(df_cog$age), y = df_cog[,cog_name])
 fname <- paste0(outdir, '/data_cog.csv')
 write.csv(df_cog, fname)
 
-# Create a dataframe for test predication data
+# Create a dataframe for test prediction data
 test_data_all <- data.frame(index = numeric(), actual = numeric(), predicted = numeric(), 
                          group = numeric(), stringsAsFactors = FALSE)
 names(test_data_all) <- c("subject", cog_name, paste0(cog_name, "_predicted"), "group")
@@ -338,11 +346,11 @@ for (i in 1:10) {
   df_cog_train <- df_cog[which(df_cog$group != i),] # Subset cognitive data into training group
   
   # Get gradient data for training group
-  gmap_train_lh <- niitogmap(df_cog_train$index, 'lh', raw = TRUE)
-  gmap_train_rh <- niitogmap(df_cog_train$index, 'rh', raw = TRUE)
+  gmap_train_lh <- gmap_lh[, as.character(df_cog_train$index)]
+  gmap_train_rh <- gmap_rh[, as.character(df_cog_train$index)]
   # Get gradient data for test group
-  gmap_test_lh <- niitogmap(df_cog_test$index, 'lh', raw = TRUE)
-  gmap_test_rh <- niitogmap(df_cog_test$index, 'rh', raw = TRUE)
+  gmap_test_lh <- gmap_lh[, as.character(df_cog_test$index)]
+  gmap_test_rh <- gmap_rh[, as.character(df_cog_test$index)]
   
   # Create data frame of linear model results
   train_lh <- niitoGLM_poly2(cog_name, df_cog_train$index, 'lh', as.numeric(rownames(gmap_train_lh)), df_cog_train)
@@ -358,7 +366,6 @@ for (i in 1:10) {
     gmap_test <- get(paste0('gmap_test_', hemi))
     
     train <- get(paste0('train_', hemi))
-    
     glasser <- get(paste0('glasser_', hemi))
     train$glasser <- glasser
   
