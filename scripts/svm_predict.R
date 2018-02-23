@@ -199,7 +199,7 @@ for (i in 1:10) {
   min <- floor(min(svm_results[, 2:3])/10)*10
   max <- ceiling(max(svm_results[, 2:3])/10)*10
   
-  ggplot(svm_results, aes(x = svm_results[, 3], y = svm_results[, 2])) + 
+  ggplot(svm_results, aes(x = svm_results[, 2], y = svm_results[, 3])) + 
     geom_point() + 
     geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
     labs(x = cog_name, y = paste(cog_name, " Predicted"), title = paste("SVM Test Dataset ", i, " of 10")) +
