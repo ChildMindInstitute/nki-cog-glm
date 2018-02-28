@@ -8,7 +8,8 @@ library("R.matlab", lib.loc="/home2/milham/R/x86_64-pc-linux-gnu-library/3.1")
 library('dplyr')
 library('ggplot2')
 library('tidyr')
-library('e1071')
+library('e1071') # for svm
+library('reshape') # for melt
 
 ##
 #groupDir <- '/data2/txu/projects/NKI_lifespan/dsc_2/group'
@@ -48,6 +49,14 @@ fname <- "/home/data/Projects/txu/templates/Glasser_et_al_2016_HCP_MMP1.0_RVVG/x
 glasser_rh <- nifti.image.read(fname)[surf_idx_rh, 1]
 glasser_parcels_lh <- unique(glasser_lh)[order(unique(glasser_lh))]
 glasser_parcels_rh <- unique(glasser_rh)[order(unique(glasser_rh))]
+
+# read in ROI parcellation
+fname <- "/projects/txu/NKI_lifespan/hcp/_SampleSphere_32k_400ROIs/resample_400_roi_cluster.lh.32k_fs_LR.nii.gz"
+roi_lh <- nifti.image.read(fname)[surf_idx_lh, 1]
+fname <- "/projects/txu/NKI_lifespan/hcp/_SampleSphere_32k_400ROIs/resample_400_roi_cluster.rh.32k_fs_LR.nii.gz"
+roi_rh <- nifti.image.read(fname)[surf_idx_rh, 1]
+roi_parcels_lh <- unique(glasser_lh)[order(unique(glasser_lh))]
+roi_parcels_rh <- unique(glasser_rh)[order(unique(glasser_rh))]
   
 # read in the cognitive task
 cog_data <- read.csv("/projects/txu/NKI_lifespan/info/cog_asmt_tx.csv")[, -1]
@@ -103,25 +112,165 @@ niitogmap <- function(sublist, hemi, raw = FALSE, demeaned = FALSE) {
   gmap
 }
 
+# A function to apply GLM based on list of subjects
+# Parameters
+# asmt: name of cognitive assessment
+# sublist: vector of subjects
+# hemi: hemisphere (lh or rh)
+# idx: index of vertices
+# df_cog: dataframe of cognitive scores
+niitoGLM <- function(asmt, sublist, hemi, idx, df_cog) {
+  print(asmt)
+  
+  gmap <- niitogmap(sublist, hemi)
+  
+  # run the model
+  ncolumn <- nvertex_on[[hemi]]
+  df <- data.frame(idx,
+                   gradient_t = numeric(ncolumn),
+                   gradient_p = numeric(ncolumn),
+                   sex_t = numeric(ncolumn),
+                   sex_p = numeric(ncolumn),
+                   age_t = numeric(ncolumn),
+                   age_p = numeric(ncolumn),
+                   rsquare = numeric(ncolumn),
+                   rsquare_adj = numeric(ncolumn))
+  df$gradient_p <- 1
+  df$sex_p <- 1
+  y <- df_cog[,asmt]
+  # lm model
+  for (i in 1:ncolumn){
+    if (i %% 500 == 0) {print(sprintf('->%d ', i))}
+    gradient <- gmap[i,]
+    dataframe <- data.frame(y, gradient, sex=df_cog$sex, age=df_cog$age)
+    try({fm <- lm(y ~ gradient + sex + age, data = dataframe)
+    output <- summary(fm)
+    df$gradient_t[i] <- output$coefficients['gradient', 't value']
+    df$gradient_p[i] <- output$coefficients['gradient', 'Pr(>|t|)']
+    df$sex_t[i] <- output$coefficients['sex1', 't value']
+    df$sex_p[i] <- output$coefficients['sex1', 'Pr(>|t|)']
+    df$age_t[i] <- output$coefficients['age', 't value']
+    df$age_p[i] <- output$coefficients['age', 'Pr(>|t|)']
+    df$rsquare[i] <- output$r.squared
+    df$rsquare_adj[i] <- output$adj.r.squared
+    df$lm_failed[i] <- 0
+    }, silent = TRUE)
+  }
+  df
+}
+
+# A function to apply GLM based on list of subjects
+# Run third order polynomial on gradient
+# Parameters
+# asmt: name of cognitive assessment
+# sublist: vector of subjects
+# hemi: hemisphere (lh or rh)
+# idx: index of vertices
+# df_cog: dataframe of cognitive scores
+niitoGLM_poly <- function(asmt, sublist, hemi, idx, df_cog) {
+  print(asmt)
+  
+  gmap <- niitogmap(sublist, hemi)
+  
+  # run the model
+  ncolumn <- nvertex_on[[hemi]]
+  df <- data.frame(idx,
+                   gradient_t = numeric(ncolumn),
+                   gradient_p = numeric(ncolumn),
+                   gradient2_t = numeric(ncolumn),
+                   gradient2_p = numeric(ncolumn),
+                   gradient3_t = numeric(ncolumn),
+                   gradient3_p = numeric(ncolumn),
+                   sex_t = numeric(ncolumn),
+                   sex_p = numeric(ncolumn),
+                   age_t = numeric(ncolumn),
+                   age_p = numeric(ncolumn),
+                   rsquare = numeric(ncolumn),
+                   rsquare_adj = numeric(ncolumn))
+  df$gradient_p <- 1
+  df$sex_p <- 1
+  y <- df_cog[,asmt]
+  # lm model
+  for (i in 1:ncolumn){
+    if (i %% 500 == 0) {print(sprintf('->%d ', i))}
+    gradient <- gmap[i,]
+    dataframe <- data.frame(y, gradient, gradient2 = gradient^2, gradient3 = gradient^3, sex=df_cog$sex, age=df_cog$age)
+    try({fm <- lm(y ~ gradient + gradient2 + gradient3 + sex + age, data = dataframe)
+    output <- summary(fm)
+    df$gradient_t[i] <- output$coefficients['gradient', 't value']
+    df$gradient_p[i] <- output$coefficients['gradient', 'Pr(>|t|)']
+    df$gradient2_t[i] <- output$coefficients['gradient2', 't value']
+    df$gradient2_p[i] <- output$coefficients['gradient2', 'Pr(>|t|)']
+    df$gradient3_t[i] <- output$coefficients['gradient3', 't value']
+    df$gradient3_p[i] <- output$coefficients['gradient3', 'Pr(>|t|)']
+    df$sex_t[i] <- output$coefficients['sex1', 't value']
+    df$sex_p[i] <- output$coefficients['sex1', 'Pr(>|t|)']
+    df$age_t[i] <- output$coefficients['age', 't value']
+    df$age_p[i] <- output$coefficients['age', 'Pr(>|t|)']
+    df$rsquare[i] <- output$r.squared
+    df$rsquare_adj[i] <- output$adj.r.squared
+    df$lm_failed[i] <- 0
+    }, silent = TRUE)
+  }
+  df
+}
+
+# A function to convert GLM values to a nifti file
+# glmdir: GLM directory
+# outdir: output directory
+# variable: sex or gradient
+# vertices: vector of vertex indices
+# hemi: lh or rh
+# asmt: name of measure
+# df: gmap data frame
+GLMtonii <- function(glmdir, outdir, variable = "gradient", vertices, hemi, df) {
+  fname <- paste0(glmdir, '/y_cov_residual.', hemi, '.32k_fs_LR.nii.gz')
+  img <- nifti.image.read(fname)
+  Nvertex <- img$dim[1]
+  
+  var <- paste0(variable, '_p')
+  idx <- vertices
+  img$dim = c(Nvertex, 1);
+  img[1:Nvertex] = matrix(0,Nvertex,1); img[idx] = df[,var]
+  fname <- paste0(outdir, '/', variable, '_p_value.', hemi, '.32k_fs_LR.nii.gz')
+  if (hemi == "lh") {
+    Hemisphere <- "L"
+  } else if (hemi == "rh") {
+    Hemisphere <- "R"
+  }
+  gname <- paste0(outdir, '/', variable, '_p_value.', Hemisphere, '.32k_fs_LR.func.gii')
+  xt_R_save_nifti(img, fname)
+  scommand <- paste0("sh xt_nii2gii_32k_fs_LR.sh ", fname, " ", gname, " ", Hemisphere)
+  system(scommand); file.remove(fname)
+  
+  scommand <- paste0("sh x_glm_clusters.sh ", Hemisphere, " ", variable, "_p_value ", outdir)
+  print(scommand)
+  system(scommand)
+  
+  fname <- paste0(outdir, '/clusters/', hemi, '.', variable, '_p_value_cluster.nii.gz')
+  fname
+}
+
+
 # A function to convert gradient values into a support vector model
 # gmap_df_lh: left hemisphere gradient map
 # gmap_df_rh: right hemisphere gradient map
-gmaptoGlasserAvg <- function(gmap_df_lh, gmap_df_rh, df_cog) {
-  glasser_parcel_avg_lh <- array(data = NA, dim = c(nrow(df_cog), 0))
-  glasser_parcel_avg_rh <- array(data = NA, dim = c(nrow(df_cog), 0))
+gmaptoParcelAvg <- function(gmap_df_lh, gmap_df_rh, parcels_lh, parcels_rh, df_cog) {
+  parcel_avg_lh <- array(data = NA, dim = c(nrow(df_cog), 0))
+  parcel_avg_rh <- array(data = NA, dim = c(nrow(df_cog), 0))
   
-  for (i in glasser_parcels_lh) {
-    glasser_parcel_avg_lh <- cbind(glasser_parcel_avg_lh, colMeans(subset(gmap_df_lh, rownames(gmap_df_lh) == as.character(i))))
+  for (i in parcels_lh) {
+    parcel_avg_lh <- cbind(parcel_avg_lh, colMeans(subset(gmap_df_lh, rownames(gmap_df_lh) == as.character(i))))
   }
-  colnames(glasser_parcel_avg_lh) <- paste0("lh_", glasser_parcels_lh)
-  for (i in glasser_parcels_rh) {
-    glasser_parcel_avg_rh <- cbind(glasser_parcel_avg_rh, colMeans(subset(gmap_df_rh, rownames(gmap_df_rh) == as.character(i))))
+  colnames(parcel_avg_lh) <- paste0("lh_", parcels_lh)
+  for (i in parcels_rh) {
+    parcel_avg_rh <- cbind(parcel_avg_rh, colMeans(subset(gmap_df_rh, rownames(gmap_df_rh) == as.character(i))))
   }
-  colnames(glasser_parcel_avg_rh) <- paste0("rh_", glasser_parcels_rh)
-  glasser_parcel_avg <- data.frame(cbind(glasser_parcel_avg_lh, glasser_parcel_avg_rh), df_cog[, cog_name])
-  names(glasser_parcel_avg) <- c(paste0("lh_", glasser_parcels_lh), paste0("rh_", glasser_parcels_rh), cog_name)
+  colnames(parcel_avg_rh) <- paste0("rh_", parcels_rh)
+  parcel_avg <- data.frame(cbind(parcel_avg_lh, parcel_avg_rh), df_cog[, cog_name])
+  names(parcel_avg) <- c(paste0("lh_", parcels_lh), paste0("rh_", parcels_rh), cog_name)
   
-  glasser_parcel_avg
+  parcel_avg
 }
 
 # output dir
@@ -135,7 +284,8 @@ colnames(cog_data_all_rm_outliers) <- c('index', 'subject', 'age', 'sex', cog_na
 
 idx_sub <- which(is.na(cog_data_all_rm_outliers[,cog_name])==FALSE) # indices of subjects with cognitive score within range
 df_cog <- cog_data_all_rm_outliers[idx_sub, ]
-df_cog$age <- df_cog$age - mean(df_cog$age) # demean age
+df_cog$age_demeaned <- df_cog$age - mean(df_cog$age) # demean age
+df_cog <- df_cog[, c("index", "subject", "age", "age_demeaned", "sex", cog_name)]
 
 
 set.seed(123)
@@ -156,9 +306,11 @@ fname <- paste0(outdir, '/data_cog.csv')
 write.csv(df_cog, fname)
 
 # Create a dataframe for test prediction data
-test_data_all <- data.frame(age = numeric(), actual = numeric(), predicted = numeric(), 
-                         group = numeric(), stringsAsFactors = FALSE)
-names(test_data_all) <- c("age", cog_name, paste0(cog_name, "_predicted"), "group")
+test_data_all <- data.frame(index = numeric(), age = numeric(), actual = numeric(), predicted_svm = numeric(), 
+                            predicted_svm = numeric(), group = numeric(), stringsAsFactors = FALSE)
+names(test_data_all) <- c("index", "age", cog_name, paste0(cog_name, "_predicted_svm"), 
+                          paste0(cog_name, "_predicted_svm"), "group")
+
 
 
 for (i in 1:10) {
@@ -175,62 +327,118 @@ for (i in 1:10) {
   gmap_test_lh <- gmap_lh[, as.character(df_cog_test$index)]
   gmap_test_rh <- gmap_rh[, as.character(df_cog_test$index)]
   
-  glasser_avg_train <- gmaptoGlasserAvg(gmap_train_lh, gmap_train_rh, df_cog_train)
-  glasser_avg_test <- gmaptoGlasserAvg(gmap_test_lh, gmap_test_rh, df_cog_test)
-  write.csv(glasser_avg_train, paste0(outdir, "/glasser_avg_train.csv"))
-  write.csv(glasser_avg_test, paste0(outdir, "/glasser_avg_test.csv"))
-  tuneResult <- tune(svm, as.formula(paste0(cog_name, " ~ .")), data = glasser_avg_train,
+  roi_avg_train <- gmaptoParcelAvg(gmap_train_lh, gmap_train_rh, roi_parcels_lh,
+                                   roi_parcels_rh, df_cog_train)
+  roi_avg_test <- gmaptoParcelAvg(gmap_test_lh, gmap_test_rh, roi_parcels_lh,
+                                  roi_parcels_rh, df_cog_test)
+  write.csv(roi_avg_train, paste0(outdir, "/roi_avg_train.csv"))
+  write.csv(roi_avg_test, paste0(outdir, "/roi_avg_test.csv"))
+  roi_avg_train <- roi_avg_train[, c(seq(1, 356, 2), 357)]
+  roi_avg_test <- roi_avg_test[, c(seq(1, 356, 2), 357)]
+  write.csv(roi_avg_train, paste0(outdir, "/roi_avg_train_subset.csv"))
+  write.csv(roi_avg_test, paste0(outdir, "/roi_avg_test_subset.csv"))
+  
+  roi_avg_train <- cbind(roi_avg_train, df_cog_train[, c("age_demeaned", "sex")])
+  roi_avg_test <- cbind(roi_avg_test, df_cog_test[, c("age_demeaned", "sex")])
+  
+  results <- data.frame(df_cog_test[, c("index", "age", cog_name)], i)
+  names(results) <- c("index", "age", cog_name, "group")
+  
+  # glasser_avg_train <- gmaptoGlasserAvg(gmap_train_lh, gmap_train_rh, df_cog_train)
+  # glasser_avg_test <- gmaptoGlasserAvg(gmap_test_lh, gmap_test_rh, df_cog_test)
+  # write.csv(glasser_avg_train, paste0(outdir, "/glasser_avg_train.csv"))
+  # write.csv(glasser_avg_test, paste0(outdir, "/glasser_avg_test.csv"))
+  tuneResult <- tune(svm, as.formula(paste0(cog_name, " ~ .")), data = roi_avg_train,
                      ranges = list(epsilon = seq(0,1,0.1), cost = 2^(0:9)))
   # svm_model <- svm(as.formula(paste0(cog_name, " ~ .")), data = glasser_avg_train, ep)
   svm_model_tuned <- tuneResult$best.model
   #svm_predict <- predict(svm_model, glasser_avg_test[, colnames(glasser_avg_test) != cog_name])
-  svm_predict_tuned <- predict(svm_model_tuned, glasser_avg_test[, colnames(glasser_avg_test) != cog_name])
-  svm_results <- data.frame(df_cog_test[, c("age", cog_name)], svm_predict_tuned, i)
-  names(svm_results) <- c("age", cog_name, paste0(cog_name, "_predicted"), "group")
+  svm_predict_tuned <- predict(svm_model_tuned, roi_avg_test[, colnames(roi_avg_test) != cog_name])
+  results[, paste0(cog_name, "_predicted_svm")] <- svm_predict_tuned
   
-  test_data_all <- rbind(test_data_all, svm_results)
+  # Try running linear model
+  lm_model <- lm(as.formula(paste0(cog_name, " ~ .")), data = roi_avg_train)
+  lm_predict <- predict(lm_model, roi_avg_test[, colnames(roi_avg_test) != cog_name])
+  results[, paste0(cog_name, "_predicted_lm")] <- lm_predict
+  results_long <- melt(results,
+                       measure.vars = paste0(cog_name, c("_predicted_svm", "_predicted_lm")))
   
-  # Create data frame of linear model results
-  error <- svm_results[, 2] - svm_results[, 3]
-  rmse <- round(sqrt(mean((error)^2)), digits = 3)
+  test_data_all <- rbind(test_data_all, results)
+  
+  # SVM statistics
+  error <- results[, cog_name] - results[, paste0(cog_name, "_predicted_svm")]
+  rmse_svm <- round(sqrt(mean((error)^2)), digits = 3)
   epsilon <- svm_model_tuned$epsilon
   cost <- svm_model_tuned$cost
   
-  min <- floor(min(svm_results[, 2:3])/10)*10
-  max <- ceiling(max(svm_results[, 2:3])/10)*10
+  # Create data frame of linear model results
+  model <- summary(lm(results[, cog_name] ~ results[, paste0(cog_name, "_predicted_lm")]))
+  error <- results[, cog_name] - results[, paste0(cog_name, "_predicted_lm")]
+  rmse_lm <- round(sqrt(mean((error)^2)), digits = 3)
+  p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
+  r <- round(cor(results[, cog_name],  results[, paste0(cog_name, "_predicted_lm")], method = "pearson"), digits = 3)
   
-  ggplot(svm_results, aes(x = svm_results[, 2], y = svm_results[, 3])) + 
+  min <- floor(min(results_long[, c(cog_name, "value")])/10)*10
+  max <- ceiling(max(results_long[, c(cog_name, "value")])/10)*10
+  
+  ggplot(results_long, aes(x = results_long[, cog_name], 
+                           y = value, 
+                           colour = variable)) + 
     geom_point() + 
-    geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
-    labs(x = cog_name, y = paste(cog_name, " Predicted"), title = paste("SVM Test Dataset ", i, " of 10")) +
+    geom_abline(slope = 1, intercept = 0, linetype = 2) +
+    #geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
+    labs(x = cog_name, 
+         y = paste(cog_name, " Predicted"), 
+         title = paste("Test Dataset ", i, " of 10")) +
+    scale_colour_discrete(labels = c("SVM", "LM")) +
     lims(x = c(min, max),
          y = c(min, max)) +
-    annotate("text", x = min, y = max - 5,  label = paste0("RMSE = ", rmse, "\nepsilon = ", epsilon, "\ncost = ", cost), hjust = 0)
-  ggsave(paste0(outdir, "/svm_", cog_name, "_", i, ".png"))
+    annotate("text", 
+             x = min, 
+             y = max - 25,  
+             label = paste0("SVM:\nRMSE = ", rmse_svm, "\nepsilon = ", epsilon, "\ncost = ", cost, "\n",
+                            "LM:\nRMSE = ", rmse_lm, "\np = ", p, "\nr = ", r), hjust = 0, size = 3)
+  ggsave(paste0(outdir, "/", cog_name, "_", i, ".png"))
+  
 }
 
 outdir <- sprintf("%s/boundary/SVM/%s", groupDir, cog_name)
 # Plot prediction data for all 10 iterations combined
 predict <- test_data_all
 
+
 if (nrow(predict) > 0) {
-  predict$age_group <- cut(predict$age, c(-40, -20, 5, 25, 45), include.lowest=TRUE) # Define age groups for subjects
-  model <- summary(lm(predict[, 2] ~ predict[, 3]))
-  p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
-  r <- round(cor(predict[, 3], predict[, 2], method = "pearson"), digits = 3)
-  rmse <- round(sqrt(mean((model$residuals)^2)), digits = 3)
+  predict_long <- melt(predict,
+                       measure.vars = paste0(cog_name, c("_predicted_svm", "_predicted_lm")))
   
-  min <- floor(min(predict[, 2:3])/10)*10
-  max <- ceiling(max(predict[, 2:3])/10)*10
+  # SVM statistics
+  predict_long_svm <- predict_long[which(predict_long$variable == paste0(cog_name, "_predicted_svm")), ]
+  error <- predict_long_svm[, cog_name] - predict_long_svm[, "value"]
+  rmse_svm <- round(sqrt(mean((error)^2)), digits = 3)
   
-  ggplot(predict, aes(x = predict[, 2], y = predict[, 3])) + 
-    geom_point(aes(colour = age_group)) + 
-    geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
-    labs(x = cog_name, y = paste(cog_name, " Predicted"), color = "Age Group (Demeaned)", title = "SVM - All Test Datasets") +
+  # Create data frame of linear model results
+  predict_long_lm <- predict_long[which(predict_long$variable == paste0(cog_name, "_predicted_lm")), ]
+  error <- predict_long_lm[, cog_name] - predict_long_lm[, "value"]
+  rmse_lm <- round(sqrt(mean((error)^2)), digits = 3)
+  
+  min <- floor(min(predict_long[, c(cog_name, "value")])/10)*10
+  max <- ceiling(max(predict_long[, c(cog_name, "value")])/10)*10
+  
+  ggplot(predict_long, aes(x = predict_long[, cog_name], 
+                           y = value, 
+                           colour = variable)) + 
+    geom_point() + 
+    geom_abline(slope = 1, intercept = 0, linetype = 2) +
+    scale_colour_discrete(labels = c("SVM", "LM")) +
+    #geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
+    labs(x = cog_name, y = paste(cog_name, " Predicted"), title = paste("All Test Datasets")) +
     lims(x = c(min, max),
          y = c(min, max)) +
-    annotate("text", x = min, y = max - 5,  label = paste0("p = ", p, "\nr = ", r, "\nRMSE = ", rmse), hjust = 0)
-  ggsave(paste0(outdir, "/svm_gradient_predict_all.png"))
-  write.csv(predict, paste0(outdir, "/svm_gradient_predict_all.csv"))
+    annotate("text", 
+             x = min, 
+             y = max - 75,  
+             label = paste0("SVM:\nRMSE = ", rmse_svm, "\n",
+                            "LM:\nRMSE = ", rmse_lm), hjust = 0, size = 3)
+  ggsave(paste0(outdir, "/", cog_name, "_predict_all.png"))
+  write.csv(predict, paste0(outdir, "/predict_all.csv"))
 }
-
