@@ -255,20 +255,14 @@ GLMtonii <- function(glmdir, outdir, variable = "gradient", vertices, hemi, df) 
 # A function to convert gradient values into a support vector model
 # gmap_df_lh: left hemisphere gradient map
 # gmap_df_rh: right hemisphere gradient map
-gmaptoParcelAvg <- function(gmap_df_lh, gmap_df_rh, parcels_lh, parcels_rh, df_cog) {
-  parcel_avg_lh <- array(data = NA, dim = c(nrow(df_cog), 0))
-  parcel_avg_rh <- array(data = NA, dim = c(nrow(df_cog), 0))
+gmaptoParcelAvg <- function(gmap_df, parcels, hemi, df_cog) {
+  parcel_avg <- array(data = NA, dim = c(nrow(df_cog), 0))
   
-  for (i in parcels_lh) {
-    parcel_avg_lh <- cbind(parcel_avg_lh, colMeans(subset(gmap_df_lh, rownames(gmap_df_lh) == as.character(i))))
+  for (i in parcels) {
+    parcel_avg <- cbind(parcel_avg, colMeans(subset(gmap_df, rownames(gmap_df) == as.character(i))))
   }
-  colnames(parcel_avg_lh) <- paste0("lh_", parcels_lh)
-  for (i in parcels_rh) {
-    parcel_avg_rh <- cbind(parcel_avg_rh, colMeans(subset(gmap_df_rh, rownames(gmap_df_rh) == as.character(i))))
-  }
-  colnames(parcel_avg_rh) <- paste0("rh_", parcels_rh)
-  parcel_avg <- data.frame(cbind(parcel_avg_lh, parcel_avg_rh), df_cog[, cog_name])
-  names(parcel_avg) <- c(paste0("lh_", parcels_lh), paste0("rh_", parcels_rh), cog_name)
+  parcel_avg <- cbind(parcel_avg, df_cog[, cog_name])
+  colnames(parcel_avg) <- c(paste(hemi, parcels, sep = "_"), cog_name)
   
   parcel_avg
 }
@@ -307,147 +301,195 @@ write.csv(df_cog, fname)
 
 # Create a dataframe for test prediction data
 test_data_all <- data.frame(index = numeric(), age = numeric(), actual = numeric(), predicted_svm = numeric(), 
-                            predicted_svm = numeric(), group = numeric(), stringsAsFactors = FALSE)
+                            predicted_svm = numeric(), group = numeric(), hemi = character(), 
+                            stringsAsFactors = FALSE)
 names(test_data_all) <- c("index", "age", cog_name, paste0(cog_name, "_predicted_svm"), 
-                          paste0(cog_name, "_predicted_svm"), "group")
+                          paste0(cog_name, "_predicted_svm"), "group", "hemi")
 
 
 
-for (i in 1:1) {
-  outdir <- sprintf("%s/boundary/SVM/%s/%s", groupDir, cog_name, i)
+for (i in 1:10) {
+  outdir <- sprintf("%s/boundary/SVM/roi_parcellation_lm/%s/%s", groupDir, cog_name, i)
   dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
+  df_cog_plot <- df_cog
+  df_cog_plot$train <- ifelse(df_cog_plot$group == i, 1, 0)
   
+  # Plot age vs. IQ, and distinguish between test and training groups
+  ggplot(df_cog_plot, aes(x = age, y = df_cog_plot[, cog_name], colour = factor(train))) +
+    geom_point() +
+    labs(x = "Age", 
+         y = cog_name, 
+         title = paste("Test Dataset ", i, " of 10"),
+         colour = "") +
+    scale_colour_discrete(labels = c("Train", "Test")) +
+    lims(x = c(0, 100),
+         y = c(40, 180))
+  ggsave(paste0(outdir, "/", cog_name, "_age_dist.png"))
+
   df_cog_test <- df_cog[which(df_cog$group == i), ] # Subset cognitive data into test group
   df_cog_train <- df_cog[which(df_cog$group != i),] # Subset cognitive data into training group
+  for (hemi in hemis) {
+    
+    # Get gradient data for training group
+    gmap <- get(paste0("gmap_", hemi))
+    gmap_train <- gmap[, as.character(df_cog_train$index)]
+    
+    # Get gradient data for test group
+    gmap_test <- gmap[, as.character(df_cog_test$index)]
+    
+    roi_parcels <- get(paste0("roi_parcels_", hemi))
+    
+    roi_avg_train <- gmaptoParcelAvg(gmap_train, roi_parcels,
+                                     hemi, df_cog_train)
+    roi_avg_test <- gmaptoParcelAvg(gmap_test, roi_parcels,
+                                    hemi, df_cog_test)
+    
+    roi_avg_train <- cbind(roi_avg_train, df_cog_train[, c("age_demeaned", "sex")])
+    roi_avg_test <- cbind(roi_avg_test, df_cog_test[, c("age_demeaned", "sex")])
+    write.csv(roi_avg_train, paste0(outdir, "/roi_avg_train_", hemi, ".csv"))
+    write.csv(roi_avg_test, paste0(outdir, "/roi_avg_test_", hemi, ".csv"))
+    
+    results <- data.frame(df_cog_test[, c("index", "age", cog_name)], i, hemi)
+    #results <- data.frame(df_cog_train[, c("index", "age", cog_name)], i)
+    names(results) <- c("index", "age", cog_name, "group", "hemi")
+    
+    # glasser_avg_train <- gmaptoGlasserAvg(gmap_train_lh, gmap_train_rh, df_cog_train)
+    # glasser_avg_test <- gmaptoGlasserAvg(gmap_test_lh, gmap_test_rh, df_cog_test)
+    # write.csv(glasser_avg_train, paste0(outdir, "/glasser_avg_train.csv"))
+    # write.csv(glasser_avg_test, paste0(outdir, "/glasser_avg_test.csv"))
+    # tuneResult <- tune(svm, as.formula(paste0(cog_name, " ~ .")), data = roi_avg_train,
+    #                    ranges = list(epsilon = seq(0,2,0.05), cost = 2^(0:9)))
+    # png(paste0(outdir, "/svm_grid_search_", hemi, ".png"))
+    # plot(tuneResult)
+    # dev.off()
+    # # svm_model <- svm(as.formula(paste0(cog_name, " ~ .")), data = glasser_avg_train, ep)
+    # svm_model_tuned <- tuneResult$best.model
+    # #svm_predict <- predict(svm_model, glasser_avg_test[, colnames(glasser_avg_test) != cog_name])
+    # svm_predict_tuned <- predict(svm_model_tuned, roi_avg_test[, colnames(roi_avg_test) != cog_name])
+    # #svm_predict_tuned <- predict(svm_model_tuned, roi_avg_train[, colnames(roi_avg_train) != cog_name])
+    # results[, paste0(cog_name, "_predicted_svm")] <- svm_predict_tuned
+    
+    # Try running linear model
+    lm_model <- lm(as.formula(paste0(cog_name, " ~ .")), data = roi_avg_train)
+    lm_stats <- data.frame(summary(lm_model)$coef[, 3:4])
+    lm_stats$sign <- as.numeric(lm_stats[, 2] < 0.05)
+    write.csv(lm_stats, paste0(outdir, "/lm_stats_", hemi, ".csv"))
+    
+    lm_predict <- predict(lm_model, roi_avg_test[, colnames(roi_avg_test) != cog_name])
+    #lm_predict <- predict(lm_model, roi_avg_train[, colnames(roi_avg_train) != cog_name])
+    results[, paste0(cog_name, "_predicted_lm")] <- lm_predict
+    
+    write.csv(results, paste0(outdir, "/results_", hemi, ".csv"))
+    
+    #results_long <- melt(results,
+    #                     measure.vars = paste0(cog_name, c("_predicted_svm", "_predicted_lm")))
+    
+    test_data_all <- rbind(test_data_all, results)
+    
+    # SVM statistics
+    # error <- results[, cog_name] - results[, paste0(cog_name, "_predicted_svm")]
+    # rmse_svm <- round(sqrt(mean((error)^2)), digits = 3)
+    # epsilon <- svm_model_tuned$epsilon
+    # cost <- svm_model_tuned$cost
+    
+    # Create data frame of linear model results
+    model <- summary(lm(results[, cog_name] ~ results[, paste0(cog_name, "_predicted_lm")]))
+    error <- results[, cog_name] - results[, paste0(cog_name, "_predicted_lm")]
+    rmse_lm <- round(sqrt(mean((error)^2)), digits = 3)
+    p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
+    r <- round(cor(results[, cog_name],  results[, paste0(cog_name, "_predicted_lm")], method = "pearson"), digits = 3)
+    
+    min <- floor(min(results[, paste0(cog_name, "_predicted_lm")])/10)*10
+    max <- ceiling(max(results[, paste0(cog_name, "_predicted_lm")])/10)*10
+    
+    ggplot(results, aes(x = results[, cog_name],
+                        y = results[, paste0(cog_name, "_predicted_lm")])) +
+      geom_point() +
+      geom_abline(slope = 1, intercept = 0, linetype = 2) +
+      #geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
+      labs(x = cog_name,
+           y = paste(cog_name, " Predicted"),
+           title = paste("Test Dataset ", i, " of 10 (", hemi, ")")) +
+      #scale_colour_discrete(labels = c("SVM", "LM")) +
+      lims(x = c(min, max),
+           y = c(min, max)) +
+      annotate("text",
+               x = min,
+               y = max - 25,
+               label = paste0("LM:\nRMSE = ", rmse_lm, "\np = ", p, "\nr = ", r), hjust = 0, size = 3)
+    ggsave(paste0(outdir, "/", cog_name, "_", i, "_", hemi, ".png"))
+  }
+  predict <- test_data_all[test_data_all$group == i, ]
   
-  # Get gradient data for training group
-  gmap_train_lh <- gmap_lh[, as.character(df_cog_train$index)]
-  gmap_train_rh <- gmap_rh[, as.character(df_cog_train$index)]
-  # Get gradient data for test group
-  gmap_test_lh <- gmap_lh[, as.character(df_cog_test$index)]
-  gmap_test_rh <- gmap_rh[, as.character(df_cog_test$index)]
-  
-  roi_avg_train <- gmaptoParcelAvg(gmap_train_lh, gmap_train_rh, roi_parcels_lh,
-                                   roi_parcels_rh, df_cog_train)
-  roi_avg_test <- gmaptoParcelAvg(gmap_test_lh, gmap_test_rh, roi_parcels_lh,
-                                  roi_parcels_rh, df_cog_test)
-  write.csv(roi_avg_train, paste0(outdir, "/roi_avg_train.csv"))
-  write.csv(roi_avg_test, paste0(outdir, "/roi_avg_test.csv"))
-  roi_avg_train <- roi_avg_train[, c(seq(1, 356, 2), 357)]
-  roi_avg_test <- roi_avg_test[, c(seq(1, 356, 2), 357)]
-  write.csv(roi_avg_train, paste0(outdir, "/roi_avg_train_subset.csv"))
-  write.csv(roi_avg_test, paste0(outdir, "/roi_avg_test_subset.csv"))
-  
-  roi_avg_train <- cbind(roi_avg_train, df_cog_train[, c("age_demeaned", "sex")])
-  roi_avg_test <- cbind(roi_avg_test, df_cog_test[, c("age_demeaned", "sex")])
-  
-  #results <- data.frame(df_cog_test[, c("index", "age", cog_name)], i)
-  results <- data.frame(df_cog_train[, c("index", "age", cog_name)], i)
-  names(results) <- c("index", "age", cog_name, "group")
-  
-  # glasser_avg_train <- gmaptoGlasserAvg(gmap_train_lh, gmap_train_rh, df_cog_train)
-  # glasser_avg_test <- gmaptoGlasserAvg(gmap_test_lh, gmap_test_rh, df_cog_test)
-  # write.csv(glasser_avg_train, paste0(outdir, "/glasser_avg_train.csv"))
-  # write.csv(glasser_avg_test, paste0(outdir, "/glasser_avg_test.csv"))
-  tuneResult <- tune(svm, as.formula(paste0(cog_name, " ~ .")), data = roi_avg_train,
-                     ranges = list(epsilon = seq(0,2,0.05), cost = 2^(0:9)))
-  png(paste0(outdir, "/svm_grid_search.png"))
-  plot(tuneResult)
-  dev.off()
-  # svm_model <- svm(as.formula(paste0(cog_name, " ~ .")), data = glasser_avg_train, ep)
-  svm_model_tuned <- tuneResult$best.model
-  #svm_predict <- predict(svm_model, glasser_avg_test[, colnames(glasser_avg_test) != cog_name])
-  #svm_predict_tuned <- predict(svm_model_tuned, roi_avg_test[, colnames(roi_avg_test) != cog_name])
-  svm_predict_tuned <- predict(svm_model_tuned, roi_avg_train[, colnames(roi_avg_train) != cog_name])
-  results[, paste0(cog_name, "_predicted_svm")] <- svm_predict_tuned
-  
-  # Try running linear model
-  lm_model <- lm(as.formula(paste0(cog_name, " ~ .")), data = roi_avg_train)
-  #lm_predict <- predict(lm_model, roi_avg_test[, colnames(roi_avg_test) != cog_name])
-  lm_predict <- predict(lm_model, roi_avg_train[, colnames(roi_avg_train) != cog_name])
-  results[, paste0(cog_name, "_predicted_lm")] <- lm_predict
-  
-  write.csv(results, paste0(outdir, "/results.csv"))
-  
-  results_long <- melt(results,
-                       measure.vars = paste0(cog_name, c("_predicted_svm", "_predicted_lm")))
-  
-  test_data_all <- rbind(test_data_all, results)
-  
-  # SVM statistics
-  error <- results[, cog_name] - results[, paste0(cog_name, "_predicted_svm")]
-  rmse_svm <- round(sqrt(mean((error)^2)), digits = 3)
-  epsilon <- svm_model_tuned$epsilon
-  cost <- svm_model_tuned$cost
-  
-  # Create data frame of linear model results
-  model <- summary(lm(results[, cog_name] ~ results[, paste0(cog_name, "_predicted_lm")]))
-  error <- results[, cog_name] - results[, paste0(cog_name, "_predicted_lm")]
+  model <- summary(lm(predict[, cog_name] ~ predict[, paste0(cog_name, "_predicted_lm")]))
+  error <- predict[, cog_name] - predict[, paste0(cog_name, "_predicted_lm")]
   rmse_lm <- round(sqrt(mean((error)^2)), digits = 3)
   p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
-  r <- round(cor(results[, cog_name],  results[, paste0(cog_name, "_predicted_lm")], method = "pearson"), digits = 3)
+  r <- round(cor(predict[, cog_name],  predict[, paste0(cog_name, "_predicted_lm")], method = "pearson"), digits = 3)
   
-  min <- floor(min(results_long[, c(cog_name, "value")])/10)*10
-  max <- ceiling(max(results_long[, c(cog_name, "value")])/10)*10
+  min <- floor(min(predict[, paste0(cog_name, "_predicted_lm")])/10)*10
+  max <- ceiling(max(predict[, paste0(cog_name, "_predicted_lm")])/10)*10
   
-  ggplot(results_long, aes(x = results_long[, cog_name], 
-                           y = value, 
-                           colour = variable)) + 
-    geom_point() + 
+  ggplot(predict, aes(x = predict[, cog_name],
+                      y = predict[, paste0(cog_name, "_predicted_lm")],
+                      colour = hemi)) +
+    geom_point() +
     geom_abline(slope = 1, intercept = 0, linetype = 2) +
     #geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
-    labs(x = cog_name, 
-         y = paste(cog_name, " Predicted"), 
-         title = paste("Test Dataset ", i, " of 10")) +
-    scale_colour_discrete(labels = c("SVM", "LM")) +
+    labs(x = cog_name,
+         y = paste(cog_name, " Predicted"),
+         title = paste("Test Dataset ", i, " of 10 (both hemispheres)")) +
+    #scale_colour_discrete(labels = c("SVM", "LM")) +
     lims(x = c(min, max),
          y = c(min, max)) +
-    annotate("text", 
-             x = min, 
-             y = max - 25,  
-             label = paste0("SVM:\nRMSE = ", rmse_svm, "\nepsilon = ", epsilon, "\ncost = ", cost, "\n",
-                            "LM:\nRMSE = ", rmse_lm, "\np = ", p, "\nr = ", r), hjust = 0, size = 3)
-  ggsave(paste0(outdir, "/", cog_name, "_", i, ".png"))
+    annotate("text",
+             x = min,
+             y = max - 25,
+             label = paste0("LM:\nRMSE = ", rmse_lm, "\np = ", p, "\nr = ", r), hjust = 0, size = 3)
+  ggsave(paste0(outdir, "/", cog_name, "_", i, "_both_hemis.png"))
   
 }
 
-outdir <- sprintf("%s/boundary/SVM/%s", groupDir, cog_name)
+outdir <- sprintf("%s/boundary/SVM/roi_parcellation_lm/%s", groupDir, cog_name)
 # Plot prediction data for all 10 iterations combined
 predict <- test_data_all
 
 
 if (nrow(predict) < 0) {
-  predict_long <- melt(predict,
-                       measure.vars = paste0(cog_name, c("_predicted_svm", "_predicted_lm")))
+  #predict_long <- melt(predict,
+  #                     measure.vars = paste0(cog_name, c("_predicted_svm", "_predicted_lm")))
   
   # SVM statistics
-  predict_long_svm <- predict_long[which(predict_long$variable == paste0(cog_name, "_predicted_svm")), ]
-  error <- predict_long_svm[, cog_name] - predict_long_svm[, "value"]
-  rmse_svm <- round(sqrt(mean((error)^2)), digits = 3)
+  #predict_long_svm <- predict_long[which(predict_long$variable == paste0(cog_name, "_predicted_svm")), ]
+  #error <- predict_long_svm[, cog_name] - predict_long_svm[, "value"]
+  #rmse_svm <- round(sqrt(mean((error)^2)), digits = 3)
   
   # Create data frame of linear model results
-  predict_long_lm <- predict_long[which(predict_long$variable == paste0(cog_name, "_predicted_lm")), ]
-  error <- predict_long_lm[, cog_name] - predict_long_lm[, "value"]
-  rmse_lm <- round(sqrt(mean((error)^2)), digits = 3)
+  #predict_long_lm <- predict_long[which(predict_long$variable == paste0(cog_name, "_predicted_lm")), ]
+  error <- predict[, cog_name] - predict[, paste0(cog_name, "_predicted_lm")]
+  rmse_lm <- round(sqrt(mean((error)^2)), digits = 3)  
+  model <- summary(lm(predict[, cog_name] ~ predict[, paste0(cog_name, "_predicted_lm")]))
+  p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
+  r <- round(cor(predict[, cog_name],  predict[, paste0(cog_name, "_predicted_lm")], method = "pearson"), digits = 3)
   
-  min <- floor(min(predict_long[, c(cog_name, "value")])/10)*10
-  max <- ceiling(max(predict_long[, c(cog_name, "value")])/10)*10
   
-  ggplot(predict_long, aes(x = predict_long[, cog_name], 
-                           y = value, 
-                           colour = variable)) + 
+  min <- floor(min(predict[, paste0(cog_name, "_predicted_lm")])/10)*10
+  max <- ceiling(max(predict[, paste0(cog_name, "_predicted_lm")])/10)*10
+  
+  ggplot(predict, aes(x = predict[, cog_name], 
+                           y = predict[, paste0(cog_name, "_predicted_lm")], 
+                           colour = hemi)) + 
     geom_point() + 
     geom_abline(slope = 1, intercept = 0, linetype = 2) +
-    scale_colour_discrete(labels = c("SVM", "LM")) +
+    #scale_colour_discrete(labels = c("SVM", "LM")) +
     #geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
     labs(x = cog_name, y = paste(cog_name, " Predicted"), title = paste("All Test Datasets")) +
     lims(x = c(min, max),
          y = c(min, max)) +
     annotate("text", 
              x = min, 
-             y = max - 75,  
-             label = paste0("SVM:\nRMSE = ", rmse_svm, "\n",
-                            "LM:\nRMSE = ", rmse_lm), hjust = 0, size = 3)
+             y = max - 15,  
+             label = paste0("LM:\nRMSE = ", rmse_lm, "\np = ", p, "\nr = ", r), hjust = 0, size = 3)
   ggsave(paste0(outdir, "/", cog_name, "_predict_all.png"))
   write.csv(predict, paste0(outdir, "/predict_all.csv"))
 }
