@@ -25,7 +25,8 @@ pwd
 mkdir clusters
 
 p_uncorr=0.05
-area=344
+#area=344
+area=120
 
 wb_command -metric-find-clusters ${templateDir}/Conte69.${Hemi}.midthickness.32k_fs_LR.surf.gii ${prefix}.${Hemi}.32k_fs_LR.func.gii ${p_uncorr} ${area} clusters/${Hemi}_${prefix}_cluster.func.gii -less-than -roi ${groupDir}/masks/${Hemi}.brain.NKI323.wb.32k_fs_LR.shape.gii
 

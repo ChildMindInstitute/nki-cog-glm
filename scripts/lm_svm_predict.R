@@ -1,3 +1,11 @@
+# lm_svm_predict.R
+# 2-step predictive model
+# Use lm to find significiant clusters
+# Use SVM to predict cognitive scores
+#
+# 3/5/2018
+# Bonhwang Koo
+
 args <- commandArgs(TRUE)
 cog_name <- args[1]
 
@@ -8,6 +16,8 @@ library("R.matlab", lib.loc="/home2/milham/R/x86_64-pc-linux-gnu-library/3.1")
 library('dplyr')
 library('ggplot2')
 library('tidyr')
+library('e1071') # for svm
+library('reshape') # for melt
 
 ##
 #groupDir <- '/data2/txu/projects/NKI_lifespan/dsc_2/group'
@@ -74,6 +84,7 @@ remove_outliers <- function(x, na.rm = TRUE, ...) {
 # sublist: vector of subjects
 # hemi: hemisphere (lh or rh)
 # raw: if TRUE, use raw gradient map. if FALSE (default), use age-regressed gradient map
+# demeaned: if TRUE, demean gradient map. if FALSE (default), use original gradient map
 niitogmap <- function(sublist, hemi, raw = FALSE, demeaned = FALSE) {
   # load mask
   print('read in brainmask 32k surface')
@@ -185,7 +196,7 @@ niitoGLM_poly2 <- function(asmt, sublist, hemi, idx, df_cog, gmap_raw = TRUE, gm
     if (i %% 500 == 0) {print(sprintf('->%d ', i))}
     gradient <- gmap[i,]
     dataframe <- data.frame(y, gradient, gradient2 = gradient^2, sex=df_cog$sex, age=df_cog$age - mean(df_cog$age))
-    try({fm <- lm(y ~ gradient + gradient2 + gradient3 + sex + age, data = dataframe)
+    try({fm <- lm(y ~ gradient + gradient2 + sex + age, data = dataframe)
     output <- summary(fm)
     df$gradient_t[i] <- output$coefficients['gradient', 't value']
     df$gradient_p[i] <- output$coefficients['gradient', 'Pr(>|t|)']
@@ -308,7 +319,6 @@ colnames(cog_data_all_rm_outliers) <- c('index', 'subject', 'age', 'sex', cog_na
 
 idx_sub <- which(is.na(cog_data_all_rm_outliers[,cog_name])==FALSE) # indices of subjects with cognitive score within range
 df_cog <- cog_data_all_rm_outliers[idx_sub, ]
-df_cog$age <- df_cog$age - mean(df_cog$age) # demean age
 
 
 set.seed(123)
@@ -329,7 +339,7 @@ write.csv(df_cog, fname)
 # Create a dataframe for test prediction data
 test_data_all <- data.frame(index = numeric(), actual = numeric(), predicted = numeric(), 
                          group = numeric(), stringsAsFactors = FALSE)
-names(test_data_all) <- c("subject", cog_name, paste0(cog_name, "_predicted"), "group")
+names(test_data_all) <- c("subject", cog_name, paste0(cog_name, "_predicted_svm"), "group")
 
 sig_clusters_lh <- matrix(data = NA, nrow = Nvertex_32k, ncol = 10)
 sig_clusters2_lh <- matrix(data = NA, nrow = Nvertex_32k, ncol = 10)
@@ -358,7 +368,7 @@ for (i in 1:10) {
   train_rh <- read.csv(paste0(dir, "/train_rh.csv"))[-1]
   #train_lh <- niitoGLM_poly2(cog_name, df_cog_train$index, 'lh', as.numeric(rownames(gmap_train_lh)), df_cog_train)
   #train_rh <- niitoGLM_poly2(cog_name, df_cog_train$index, 'rh', as.numeric(rownames(gmap_train_rh)), df_cog_train)
-  outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/03062018_age_regressed_lm_lm/%s/%s", groupDir, cog_name, i)
+  outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/03062018_age_regressed_lm_svm/%s/%s", groupDir, cog_name, i)
   dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
   
   n_cluster_total <- 0
@@ -553,54 +563,44 @@ for (i in 1:10) {
     cluster_avg_train <- merge(cluster_avg_train_lh, cluster_avg_train_rh, by = c("index", "age", "sex", cog_name))
     cluster_avg_test <- merge(cluster_avg_test_lh, cluster_avg_test_rh, by = c("index", "age", "sex", cog_name))
   
+    cluster_avg_train$age_demeaned <- cluster_avg_train$age - mean(cluster_avg_train$age)
+    cluster_avg_test$age_demeaned <- cluster_avg_test$age - mean(cluster_avg_test$age)
+    
     # Demean cluster averages
-    cluster_avg_all <- rbind(cluster_avg_train, cluster_avg_test)
-    cluster_avg_all[, 5:ncol(cluster_avg_all)] <- lapply(cluster_avg_all[, 5:ncol(cluster_avg_all)], function(x) {x - mean(x)})
-    
-    cluster_avg_train <- cluster_avg_all[cluster_avg_all$index %in% cluster_avg_train$index, ]
-    cluster_avg_test <- cluster_avg_all[cluster_avg_all$index %in% cluster_avg_test$index, ]
+    # cluster_avg_all <- rbind(cluster_avg_train, cluster_avg_test)
+    # cluster_avg_all[, 5:ncol(cluster_avg_all)] <- lapply(cluster_avg_all[, 5:ncol(cluster_avg_all)], function(x) {x - mean(x)})
+    # 
+    # cluster_avg_train <- cluster_avg_all[cluster_avg_all$index %in% cluster_avg_train$index, ]
+    # cluster_avg_test <- cluster_avg_all[cluster_avg_all$index %in% cluster_avg_test$index, ]
       
-    # Run generalized linear model for clusters, age, and sex
+    # Run svm for clusters, age, and sex
+    cluster_avg_train_svm <- cluster_avg_train[, !(names(cluster_avg_train) %in% c("index", "age"))]
+    cluster_avg_test_svm <- cluster_avg_test[, !(names(cluster_avg_test) %in% c("index", "age"))]
+    tuneResult <- tune(svm, as.formula(paste0(cog_name, " ~ .")), data = cluster_avg_train_svm,
+                       ranges = list(epsilon = seq(0,2,0.05), cost = 2^(0:9)))
+    png(paste0(outdir, "/svm_grid_search.png"))
+    plot(tuneResult)
+    dev.off()
     
-    run_glm <- paste0("glm(", cog_name, " ~ ", 
-                      paste(c(names(cluster_avg_train)[5:ncol(cluster_avg_train)]), collapse = " + "),
-                      " + age + sex, data = cluster_avg_train)")
-    glm_result <- eval(parse(text = run_glm))
-    run_lm <- paste0("lm(", cog_name, " ~ ", 
-                      paste(c(names(cluster_avg_train)[5:ncol(cluster_avg_train)]), collapse = " + "),
-                      " + age + sex, data = cluster_avg_train)")
-    lm_result <- eval(parse(text = run_lm))
-    coefficients <- glm_result$coefficients
-    lm_coefficients <- lm_result$coefficients
+    svm_model_tuned <- tuneResult$best.model
+    svm_predict_tuned <- predict(svm_model_tuned, cluster_avg_test_svm[, colnames(cluster_avg_test_svm) != cog_name])
+    cluster_avg_test[, paste0(cog_name, "_predicted_svm")] <- svm_predict_tuned
     
-    # Use glm to predict cognitive score for test dataset
-    #cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict.glm(glm_result, newdata = cluster_avg_test,
-    #                                                              type = "response")
-    cluster_avg_test[, paste0(cog_name, "_predicted")] <- predict(lm_result, newdata = cluster_avg_test,
-                                                                  type = "response")
-    
-    # png(paste0(outdir, "/glm_", xname, "_pvalue_", hemi, ".png"))
-    # plot(cluster_avg_test[, paste0(cog_name, "_predicted")], cluster_avg_test[, cog_name], xlab = paste0("Predicted ", cog_name), 
-    #      ylab = paste0("Actual ", cog_name))
-    # abline(a=0, b=1, col="red")
-    # dev.off()
     
     cluster_avg_train$group <- i
     cluster_avg_test$group <- i
     
     # Combine prediction data with prediction data from previous iterations
     
-    predict <- cluster_avg_test[, c("index", cog_name, paste0(cog_name, "_predicted"),
+    predict <- cluster_avg_test[, c("index", cog_name, paste0(cog_name, "_predicted_svm"),
                                     "group")]
-    
     test_data_all <- rbind(test_data_all, predict)
-    
-    # LM stats
-    error <- predict[, cog_name] - predict[, paste0(cog_name, "_predicted")]
-    rmse_lm <- round(sqrt(mean((error)^2)), digits = 3)
-    model <- summary(lm(predict[, 2] ~ predict[, 3]))
-    p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
-    r <- round(cor(predict[, 3], predict[, 2], method = "pearson"), digits = 3)
+  
+    # SVM statistics
+    error <- predict[, cog_name] - predict[, paste0(cog_name, "_predicted_svm")]
+    rmse_svm <- round(sqrt(mean((error)^2)), digits = 3)
+    epsilon <- svm_model_tuned$epsilon
+    cost <- svm_model_tuned$cost
     
     min <- floor(min(predict[, 2:3])/10)*10
     max <- ceiling(max(predict[, 2:3])/10)*10
@@ -612,7 +612,7 @@ for (i in 1:10) {
       labs(x = cog_name, y = paste(cog_name, " Predicted"), title = "gradient p_value") +
       lims(x = c(min, max),
            y = c(min, max)) +
-      annotate("text", x = min, y = max - 5,  label = paste0("p = ", p, "\nr = ", r, "\nRMSE = ", rmse_lm), hjust = 0)
+      annotate("text", x = min, y = max - 5,  label = paste0("epsilon = ", epsilon, "\ncost = ", cost, "\nRMSE = ", rmse_svm), hjust = 0)
     ggsave(paste0(outdir, "/glm_gradient_pvalue.png"))
   
     write.csv(cluster_avg_train, paste0(outdir, "/gradient_pvalue_", "cluster_avg_train.csv"), row.names = FALSE)
@@ -629,7 +629,7 @@ for (j in c("sig_clusters_lh", "sig_clusters_rh", "sig_clusters2_lh", "sig_clust
   sig_clusters <- get(j)
   sig_clusters_combined <- rowSums(sig_clusters > 0)
   img[1:Nvertex_32k] <- sig_clusters_combined
-  outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/03062018_age_regressed_lm_lm/%s", groupDir, cog_name)
+  outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/03062018_age_regressed_lm_svm/%s", groupDir, cog_name)
   fname <- paste0(outdir, '/', j, '.32k_fs_LR.nii.gz')
   if (hemi == "lh") {
     Hemisphere <- "L"
@@ -642,14 +642,14 @@ for (j in c("sig_clusters_lh", "sig_clusters_rh", "sig_clusters2_lh", "sig_clust
   system(scommand); file.remove(fname)
 }
 
-outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/03062018_age_regressed_lm_lm/%s", groupDir, cog_name)
+outdir <- sprintf("%s/boundary/GLM/gradient_age_age2_gm_cov/residual_cognitive/03062018_age_regressed_lm_svm/%s", groupDir, cog_name)
 # Plot prediction data for all 10 iterations combined
 predict <- test_data_all
 predict$age <- df_cog$age[match(predict$index, df_cog$index)]
 predict$sex <- df_cog$sex[match(predict$index, df_cog$index)]
 
 if (nrow(predict) > 0) {
-  predict$age_group <- cut(predict$age, c(-40, -20, 5, 25, 45), include.lowest=TRUE) # Define age groups for subjects
+  predict$age_group <- cut(predict$age, c(6, 20, 40, 60, 85), include.lowest=TRUE) # Define age groups for subjects
   model <- summary(lm(predict[, 2] ~ predict[, 3]))
   p <- formatC(model$coefficients[2, 4], format = "e", digits = 2)
   r <- round(cor(predict[, 3], predict[, 2], method = "pearson"), digits = 3)
@@ -661,7 +661,7 @@ if (nrow(predict) > 0) {
     geom_point(aes(colour = age_group)) + 
     geom_smooth(method = 'lm', color = "#000000", fill = "#000000", alpha = 0.1) +
     geom_abline(slope = 1, intercept = 0, linetype = 2) +
-    labs(x = cog_name, y = paste(cog_name, " Predicted"), color = "Age Group (Demeaned)", title = "gradient p_value all") +
+    labs(x = cog_name, y = paste(cog_name, " Predicted"), color = "Age Group", title = "gradient p_value all") +
     lims(x = c(min, max),
          y = c(min, max)) +
     annotate("text", x = min, y = max - 5,  label = paste0("p = ", p, "\nr = ", r), hjust = 0)
